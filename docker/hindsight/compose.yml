@@ -10,11 +10,13 @@ services:
     environment:
       HINDSIGHT_API_WORKER_ID: ${HINDSIGHT_API_WORKER_ID:-memory-server-main}
       HINDSIGHT_API_LLM_MAX_CONCURRENT: ${HINDSIGHT_API_LLM_MAX_CONCURRENT:-2}
+      CODEX_HOME: /var/lib/hindsight/codex
       HTTP_PROXY: ${HINDSIGHT_HTTP_PROXY:-http://127.0.0.1:10809}
       HTTPS_PROXY: ${HINDSIGHT_HTTP_PROXY:-http://127.0.0.1:10809}
       NO_PROXY: ${HINDSIGHT_NO_PROXY:-localhost,127.0.0.1,::1}
     volumes:
       - hindsight-data:/home/hindsight/.pg0
+      - ${HINDSIGHT_CODEX_AUTH_DIR:-/var/lib/hindsight/codex}:/var/lib/hindsight/codex:ro
 
 volumes:
   hindsight-data:
