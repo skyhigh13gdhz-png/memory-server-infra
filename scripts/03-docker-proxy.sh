@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+trap 'rc=$?; printf "\n[ERROR] 03-docker-proxy.sh 第 %s 行失败，退出码 %s：%s\n" "$LINENO" "$rc" "$BASH_COMMAND" >&2; exit "$rc"' ERR
 
 # 配置 Docker daemon 通过宿主机 Xray HTTP 入站拉取海外镜像。
-# 注意：这只解决 dockerd 拉镜像等流量；容器自身的出站代理是另一条路径，不在这里全局注入。
+# 注意：Docker Registry 的 /v2/ 对匿名请求正常会返回 HTTP 401；
+# 401 反而证明 DNS/TCP/TLS/HTTP 已经成功穿过代理到达 Registry。
 
 XRAY_HTTP_PROXY="${XRAY_HTTP_PROXY:-http://127.0.0.1:10809}"
 DROPIN_DIR="/etc/systemd/system/docker.service.d"
@@ -26,9 +28,16 @@ if ! ss -lnt | awk '{print $4}' | grep -Eq "(^|:)${proxy_port}$"; then
   die "没有检测到本机 Xray HTTP 代理端口 ${proxy_port} 正在监听。"
 fi
 
-log "先直接通过 Xray HTTP 入站验证海外 HTTPS。"
-curl --proxy "$XRAY_HTTP_PROXY" -fsSIL --max-time 20 https://registry-1.docker.io/v2/ >/dev/null || \
-  die "通过 Xray 访问 Docker Registry 失败，暂不修改 Docker。"
+log "通过 Xray HTTP 入站验证 Docker Registry 连通性。"
+# 不使用 curl -f：registry-1.docker.io/v2/ 对未认证请求预期返回 401。
+# 只要得到任意有效 HTTP 状态码，就说明代理已经完成 DNS/TCP/TLS/HTTP 链路；
+# 对这个端点 200 或 401 都是明确的成功结果。
+http_code="$(curl --proxy "$XRAY_HTTP_PROXY" -sS -o /dev/null -w '%{http_code}' --connect-timeout 8 --max-time 20 https://registry-1.docker.io/v2/ || true)"
+case "$http_code" in
+  200|401) log "Xray → Docker Registry 连通正常（HTTP ${http_code}，401 为匿名 Registry 的预期响应）。" ;;
+  000|'') die "通过 Xray 未能与 Docker Registry 建立有效 HTTP 连接。" ;;
+  *) die "通过 Xray 到达 Docker Registry，但返回异常 HTTP ${http_code}；暂不修改 Docker。" ;;
+esac
 
 mkdir -p "$DROPIN_DIR"
 cat > "$DROPIN_FILE" <<EOF
@@ -47,7 +56,6 @@ log "Docker daemon 代理环境："
 systemctl show --property=Environment docker
 
 log "执行轻量镜像拉取验证。"
-# alpine 很小，验证成功后保留镜像供后续诊断使用。
 docker pull alpine:latest >/dev/null || die "Docker 通过当前出站配置拉取 alpine 失败。"
 
 log "Docker daemon 出站代理配置完成。"
