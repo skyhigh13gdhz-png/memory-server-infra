@@ -20,17 +20,14 @@ preflight(){
 download_docker_key(){
   local out="$1" url="https://download.docker.com/linux/ubuntu/gpg"
   log "下载 Docker 官方 GPG key（先直连，失败时自动尝试本机 Xray）。"
-  if curl -fsSL --connect-timeout 8 --max-time 30 "$url" -o "$out"; then
-    log "Docker GPG key 直连下载成功。"; return 0
-  fi
+  if curl -fsSL --connect-timeout 8 --max-time 30 "$url" -o "$out"; then log "Docker GPG key 直连下载成功。"; return 0; fi
   warn "Docker GPG key 直连失败，检测本机 Xray HTTP 代理 ${XRAY_HTTP_PROXY}。"
-  if ! xray_proxy_ready; then die "直连 Docker 官方站失败，且本机 Xray HTTP 代理不可用：${XRAY_HTTP_PROXY}"; fi
+  xray_proxy_ready || die "直连 Docker 官方站失败，且本机 Xray HTTP 代理不可用：${XRAY_HTTP_PROXY}"
   curl -fsSL --connect-timeout 8 --max-time 30 --proxy "$XRAY_HTTP_PROXY" "$url" -o "$out" || die "通过本机 Xray 下载 Docker 官方 GPG key 仍失败。"
   log "Docker GPG key 已通过本机 Xray 下载成功。"
 }
 
 apt_update_docker_repo(){
-  # 只给本次 apt 请求设置 HTTPS 代理；腾讯/Ubuntu HTTP 镜像仍按原路径直连。
   if apt-get update; then return 0; fi
   warn "apt 更新 Docker 官方仓库失败，尝试仅为 HTTPS 请求使用本机 Xray。"
   xray_proxy_ready || die "apt 更新失败，且本机 Xray HTTP 代理不可用。"
@@ -39,8 +36,10 @@ apt_update_docker_repo(){
 
 install_official_docker(){
   log "配置 Docker 官方 apt 仓库。"; apt-get update; DEBIAN_FRONTEND=noninteractive apt-get install -y ca-certificates curl; install -m0755 -d /etc/apt/keyrings
-  local key_tmp; key_tmp="$(mktemp)"; trap 'rm -f "$key_tmp"' RETURN
-  download_docker_key "$key_tmp"; install -m0644 "$key_tmp" /etc/apt/keyrings/docker.asc
+  local key_tmp; key_tmp="$(mktemp)"
+  # 不使用 RETURN trap：它会被函数内部每个子函数 return 触发，并在函数结束后继续保留；
+  # 配合 set -u 时会引用已经离开作用域的 local key_tmp，导致 Docker 明明安装成功却报 unbound variable。
+  download_docker_key "$key_tmp"; install -m0644 "$key_tmp" /etc/apt/keyrings/docker.asc; rm -f "$key_tmp"; key_tmp=""
   cat >/etc/apt/sources.list.d/docker.sources <<EOF
 Types: deb
 URIs: https://download.docker.com/linux/ubuntu
@@ -55,10 +54,8 @@ EOF
   if [[ -z "$candidate" || "$candidate" == "(none)" ]]; then madison_output="$(LC_ALL=C apt-cache madison docker-ce 2>/dev/null || true)"; candidate="$(awk 'NR==1 {gsub(/^ +| +$/, "", $3); print $3}' <<<"$madison_output")"; fi
   [[ -n "$candidate" && "$candidate" != "(none)" ]] || { printf '%s\n' "$policy_output" >&2; die "Docker 官方仓库已加入，但 apt 无法解析 docker-ce 候选版本。"; }
   log "检测到 Docker CE 候选版本：${candidate}"
-  # 软件包本体也可能来自 download.docker.com；先正常安装，失败时通过 Xray 重试。
   if ! DEBIAN_FRONTEND=noninteractive apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
-    warn "Docker 软件包直连安装失败，改用本机 Xray 处理 HTTPS 下载。"
-    xray_proxy_ready || die "Docker 软件包安装失败，且 Xray 代理不可用。"
+    warn "Docker 软件包直连安装失败，改用本机 Xray 处理 HTTPS 下载。"; xray_proxy_ready || die "Docker 软件包安装失败，且 Xray 代理不可用。"
     DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::https::Proxy="$XRAY_HTTP_PROXY" install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin || die "通过 Xray 安装 Docker 软件包仍失败。"
   fi
   systemctl enable --now docker
