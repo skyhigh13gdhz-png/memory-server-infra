@@ -16,7 +16,9 @@ services:
       NO_PROXY: ${HINDSIGHT_NO_PROXY:-localhost,127.0.0.1,::1}
     volumes:
       - hindsight-data:/home/hindsight/.pg0
-      - ${HINDSIGHT_CODEX_AUTH_DIR:-/var/lib/hindsight/codex}:/var/lib/hindsight/codex:ro
+      # 宿主机 Codex 凭据目录保持 0700；只把 auth.json 文件只读挂载给容器，
+      # 避免 Hindsight 的非 root 用户因宿主机目录权限无法遍历而 Permission denied。
+      - ${HINDSIGHT_CODEX_AUTH_DIR:-/var/lib/hindsight/codex}/auth.json:/var/lib/hindsight/codex/auth.json:ro
 
 volumes:
   hindsight-data:
