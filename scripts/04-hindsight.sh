@@ -40,7 +40,35 @@ get_env(){ local key="$1"; awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); print;
 PROVIDER="$(get_env HINDSIGHT_API_LLM_PROVIDER)"; PROVIDER="${PROVIDER:-openai-codex}"
 API_KEY="$(get_env HINDSIGHT_API_LLM_API_KEY)"
 
+install_codex_cli() {
+  if command -v codex >/dev/null 2>&1; then
+    log "Codex CLI 已安装：$(codex --version 2>/dev/null || printf 'version unknown')"
+    return 0
+  fi
+
+  log "未检测到 Codex CLI，开始自动安装 OpenAI Codex CLI。"
+  if ! command -v npm >/dev/null 2>&1; then
+    die "openai-codex 模式需要 npm 来安装 Codex CLI，但当前未检测到 npm。请先安装 Node.js/npm 后重试。"
+  fi
+
+  # npm 安装可能需要访问海外 registry。优先直连；失败后仅对本次命令临时使用宿主机 Xray。
+  if npm install -g @openai/codex; then
+    :
+  else
+    warn "Codex CLI 直连安装失败，尝试仅对本次 npm 命令使用 Xray HTTP 代理。"
+    HTTP_PROXY=http://127.0.0.1:10809 \
+    HTTPS_PROXY=http://127.0.0.1:10809 \
+    npm_config_proxy=http://127.0.0.1:10809 \
+    npm_config_https_proxy=http://127.0.0.1:10809 \
+      npm install -g @openai/codex || die "Codex CLI 自动安装失败。"
+  fi
+
+  command -v codex >/dev/null 2>&1 || die "npm 已执行安装，但 codex 命令仍不可用。"
+  log "Codex CLI 安装完成：$(codex --version 2>/dev/null || printf 'version unknown')"
+}
+
 if [[ "$PROVIDER" == "openai-codex" ]]; then
+  install_codex_cli
   CODEX_AUTH_DIR="$(get_env CODEX_HOME)"; CODEX_AUTH_DIR="${CODEX_AUTH_DIR:-$CODEX_AUTH_DIR_DEFAULT}"
   mkdir -p "$CODEX_AUTH_DIR"
   chmod 700 "$CODEX_AUTH_DIR"
@@ -48,12 +76,13 @@ if [[ "$PROVIDER" == "openai-codex" ]]; then
     cat <<EOF
 
 [需要一次性授权] 当前 LLM Provider：openai-codex（ChatGPT Plus/Pro OAuth，无需 API Key）
+Codex CLI 已准备好。
 Hindsight 将使用独立凭据目录：${CODEX_AUTH_DIR}
 
-请先在服务器上安装/使用 Codex CLI，并把登录凭据写入该独立目录：
-  sudo env CODEX_HOME=${CODEX_AUTH_DIR} codex auth login
+请执行一次人工 OAuth 登录：
+  sudo env CODEX_HOME=${CODEX_AUTH_DIR} codex login --device-auth
 
-如果服务器还没有 codex 命令，请先安装 Node.js/npm 与 @openai/codex。
+按照终端提示，在你自己的浏览器完成 ChatGPT 授权。
 授权完成后确认存在：${CODEX_AUTH_DIR}/auth.json
 然后重新运行：sudo bash setup.sh
 
