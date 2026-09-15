@@ -5,6 +5,18 @@
 *.key
 *.pem
 *.secret
+*.p12
+*.pfx
+*.crt
+*.cer
+auth.json
+**/auth.json
+
+# Common credential / proxy local files
+credentials.json
+secrets/
+**/secrets/
+config.local.json
 
 # Runtime data
 /data/
