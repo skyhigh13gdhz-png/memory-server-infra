@@ -30,39 +30,92 @@ log "部署前资源：RAM ${MEM_MB} MB / Swap ${SWAP_MB} MB / Docker 所在分�
 mkdir -p "$APP_DIR"
 install -m 0644 "${SOURCE_DIR}/compose.yml" "${APP_DIR}/compose.yml"
 
-if [[ ! -f "$ENV_FILE" ]]; then
+get_env(){ local key="$1"; [[ -f "$ENV_FILE" ]] || return 0; awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); print; exit}' "$ENV_FILE"; }
+write_env_value() {
+  local key="$1" value="$2" tmp
+  tmp="$(mktemp)"
+  awk -F= -v k="$key" -v v="$value" 'BEGIN{done=0} $1==k {print k "=" v; done=1; next} {print} END{if(!done) print k "=" v}' "$ENV_FILE" >"$tmp"
+  install -m 0600 "$tmp" "$ENV_FILE"
+  rm -f "$tmp"
+}
+
+first_config_wizard() {
   install -m 0600 "${SOURCE_DIR}/.env.example" "$ENV_FILE"
-  log "已生成服务器本地配置：${ENV_FILE}"
+  cat <<'EOF'
+
+========== Hindsight LLM 首次配置 ==========
+
+请选择 Hindsight 使用的 LLM 认证方式：
+
+  [1] ChatGPT / Codex OAuth（推荐）
+      - 不需要单独申请 API Key
+      - 适合已有 ChatGPT Plus / Pro 的用户
+      - 需要在浏览器中人工授权一次
+
+  [2] LLM API Key
+      - 适用于 OpenAI / Gemini / Anthropic / DeepSeek / Groq / OpenRouter 等
+      - 需要 Provider、Model 和 API Key
+      - API Key 仅写入本机 .env，不提交 Git
+EOF
+
+  local choice provider model api_key
+  while true; do
+    read -r -p "请输入 [1/2]: " choice
+    case "$choice" in
+      1)
+        write_env_value HINDSIGHT_API_LLM_PROVIDER "openai-codex"
+        write_env_value HINDSIGHT_API_LLM_MODEL "gpt-5.4-mini"
+        write_env_value HINDSIGHT_API_LLM_API_KEY ""
+        write_env_value CODEX_HOME "$CODEX_AUTH_DIR_DEFAULT"
+        log "已选择 ChatGPT / Codex OAuth。"
+        break
+        ;;
+      2)
+        echo
+        read -r -p "Provider（例如 openai / gemini / anthropic / deepseek / groq / openrouter）: " provider
+        [[ -n "$provider" ]] || { warn "Provider 不能为空。"; continue; }
+        read -r -p "Model（填写该 Provider 实际支持的模型名）: " model
+        [[ -n "$model" ]] || { warn "Model 不能为空。"; continue; }
+        read -r -s -p "API Key（输入内容不会显示）: " api_key
+        echo
+        [[ -n "$api_key" ]] || { warn "API Key 不能为空。"; continue; }
+        write_env_value HINDSIGHT_API_LLM_PROVIDER "$provider"
+        write_env_value HINDSIGHT_API_LLM_MODEL "$model"
+        write_env_value HINDSIGHT_API_LLM_API_KEY "$api_key"
+        log "LLM API 配置已保存到服务器本地 ${ENV_FILE}。"
+        unset api_key
+        break
+        ;;
+      *) warn "请输入 1 或 2。" ;;
+    esac
+  done
+}
+
+# 新服务器没有 .env 时进入一次向导；已有配置永远不重复询问。
+if [[ ! -f "$ENV_FILE" ]]; then
+  first_config_wizard
 fi
 chmod 600 "$ENV_FILE"
 
-get_env(){ local key="$1"; awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); print; exit}' "$ENV_FILE"; }
-PROVIDER="$(get_env HINDSIGHT_API_LLM_PROVIDER)"; PROVIDER="${PROVIDER:-openai-codex}"
+PROVIDER="$(get_env HINDSIGHT_API_LLM_PROVIDER)"
 API_KEY="$(get_env HINDSIGHT_API_LLM_API_KEY)"
+[[ -n "$PROVIDER" ]] || die "${ENV_FILE} 中缺少 HINDSIGHT_API_LLM_PROVIDER。"
 
 install_codex_cli() {
   if command -v codex >/dev/null 2>&1; then
     log "Codex CLI 已安装：$(codex --version 2>/dev/null || printf 'version unknown')"
     return 0
   fi
-
   log "未检测到 Codex CLI，开始自动安装 OpenAI Codex CLI。"
-  if ! command -v npm >/dev/null 2>&1; then
-    die "openai-codex 模式需要 npm 来安装 Codex CLI，但当前未检测到 npm。请先安装 Node.js/npm 后重试。"
-  fi
-
-  # npm 安装可能需要访问海外 registry。优先直连；失败后仅对本次命令临时使用宿主机 Xray。
+  command -v npm >/dev/null 2>&1 || die "openai-codex 模式需要 npm，但当前未检测到 npm。请先安装 Node.js/npm。"
   if npm install -g @openai/codex; then
     :
   else
     warn "Codex CLI 直连安装失败，尝试仅对本次 npm 命令使用 Xray HTTP 代理。"
-    HTTP_PROXY=http://127.0.0.1:10809 \
-    HTTPS_PROXY=http://127.0.0.1:10809 \
-    npm_config_proxy=http://127.0.0.1:10809 \
-    npm_config_https_proxy=http://127.0.0.1:10809 \
+    HTTP_PROXY=http://127.0.0.1:10809 HTTPS_PROXY=http://127.0.0.1:10809 \
+    npm_config_proxy=http://127.0.0.1:10809 npm_config_https_proxy=http://127.0.0.1:10809 \
       npm install -g @openai/codex || die "Codex CLI 自动安装失败。"
   fi
-
   command -v codex >/dev/null 2>&1 || die "npm 已执行安装，但 codex 命令仍不可用。"
   log "Codex CLI 安装完成：$(codex --version 2>/dev/null || printf 'version unknown')"
 }
@@ -70,29 +123,26 @@ install_codex_cli() {
 if [[ "$PROVIDER" == "openai-codex" ]]; then
   install_codex_cli
   CODEX_AUTH_DIR="$(get_env CODEX_HOME)"; CODEX_AUTH_DIR="${CODEX_AUTH_DIR:-$CODEX_AUTH_DIR_DEFAULT}"
-  mkdir -p "$CODEX_AUTH_DIR"
-  chmod 700 "$CODEX_AUTH_DIR"
+  mkdir -p "$CODEX_AUTH_DIR"; chmod 700 "$CODEX_AUTH_DIR"
   if [[ ! -s "$CODEX_AUTH_DIR/auth.json" ]]; then
     cat <<EOF
 
-[需要一次性授权] 当前 LLM Provider：openai-codex（ChatGPT Plus/Pro OAuth，无需 API Key）
-Codex CLI 已准备好。
-Hindsight 将使用独立凭据目录：${CODEX_AUTH_DIR}
+[需要一次性授权]
+Codex CLI 已准备好，Hindsight 使用独立凭据目录：${CODEX_AUTH_DIR}
 
-请执行一次人工 OAuth 登录：
+请执行：
   sudo env CODEX_HOME=${CODEX_AUTH_DIR} codex login --device-auth
 
 按照终端提示，在你自己的浏览器完成 ChatGPT 授权。
-授权完成后确认存在：${CODEX_AUTH_DIR}/auth.json
-然后重新运行：sudo bash setup.sh
+完成后重新运行：sudo bash setup.sh
 
-不要把 auth.json 提交 Git，也不要把其中内容发到聊天中。
+不要把 auth.json 内容发到聊天中，也不要提交 Git。
 EOF
     exit 20
   fi
   log "已检测到独立 Codex OAuth 凭据；无需 LLM API Key。"
 else
-  [[ -n "$API_KEY" ]] || die "当前 Provider=${PROVIDER} 需要 API Key，但 ${ENV_FILE} 中 HINDSIGHT_API_LLM_API_KEY 为空。"
+  [[ -n "$API_KEY" ]] || die "当前 Provider=${PROVIDER} 需要 API Key，但 HINDSIGHT_API_LLM_API_KEY 为空。"
 fi
 
 IMAGE_TAG="$(get_env HINDSIGHT_IMAGE_TAG)"; IMAGE_TAG="${IMAGE_TAG:-latest}"
