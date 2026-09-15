@@ -57,7 +57,6 @@ first_config_wizard() {
       - 需要 Provider、Model 和 API Key
       - API Key 仅写入本机 .env，不提交 Git
 EOF
-
   local choice provider model api_key
   while true; do
     read -r -p "请输入 [1/2]: " choice
@@ -68,56 +67,76 @@ EOF
         write_env_value HINDSIGHT_API_LLM_API_KEY ""
         write_env_value CODEX_HOME "$CODEX_AUTH_DIR_DEFAULT"
         log "已选择 ChatGPT / Codex OAuth。"
-        break
-        ;;
+        break ;;
       2)
         echo
         read -r -p "Provider（例如 openai / gemini / anthropic / deepseek / groq / openrouter）: " provider
         [[ -n "$provider" ]] || { warn "Provider 不能为空。"; continue; }
         read -r -p "Model（填写该 Provider 实际支持的模型名）: " model
         [[ -n "$model" ]] || { warn "Model 不能为空。"; continue; }
-        read -r -s -p "API Key（输入内容不会显示）: " api_key
-        echo
+        read -r -s -p "API Key（输入内容不会显示）: " api_key; echo
         [[ -n "$api_key" ]] || { warn "API Key 不能为空。"; continue; }
         write_env_value HINDSIGHT_API_LLM_PROVIDER "$provider"
         write_env_value HINDSIGHT_API_LLM_MODEL "$model"
         write_env_value HINDSIGHT_API_LLM_API_KEY "$api_key"
         log "LLM API 配置已保存到服务器本地 ${ENV_FILE}。"
         unset api_key
-        break
-        ;;
+        break ;;
       *) warn "请输入 1 或 2。" ;;
     esac
   done
 }
 
-# 新服务器没有 .env 时进入一次向导；已有配置永远不重复询问。
-if [[ ! -f "$ENV_FILE" ]]; then
-  first_config_wizard
-fi
+if [[ ! -f "$ENV_FILE" ]]; then first_config_wizard; fi
 chmod 600 "$ENV_FILE"
-
 PROVIDER="$(get_env HINDSIGHT_API_LLM_PROVIDER)"
 API_KEY="$(get_env HINDSIGHT_API_LLM_API_KEY)"
 [[ -n "$PROVIDER" ]] || die "${ENV_FILE} 中缺少 HINDSIGHT_API_LLM_PROVIDER。"
 
+# sudo 的 secure_path 不一定包含用户通过 nvm 等安装的 node/npm。
+# 先找 root PATH；找不到时再从发起 sudo 的原用户登录 shell 中解析命令绝对路径。
+find_user_command() {
+  local name="$1" path="" sudo_user="${SUDO_USER:-}"
+  path="$(command -v "$name" 2>/dev/null || true)"
+  if [[ -n "$path" ]]; then printf '%s\n' "$path"; return 0; fi
+  if [[ -n "$sudo_user" && "$sudo_user" != "root" ]]; then
+    path="$(sudo -Hiu "$sudo_user" bash -lc "command -v $name" 2>/dev/null | tail -n1 || true)"
+    [[ -n "$path" && -x "$path" ]] && { printf '%s\n' "$path"; return 0; }
+  fi
+  return 1
+}
+
 install_codex_cli() {
-  if command -v codex >/dev/null 2>&1; then
-    log "Codex CLI 已安装：$(codex --version 2>/dev/null || printf 'version unknown')"
+  local codex_bin npm_bin npm_dir install_path
+  codex_bin="$(find_user_command codex || true)"
+  if [[ -n "$codex_bin" ]]; then
+    log "Codex CLI 已安装：$($codex_bin --version 2>/dev/null || printf 'version unknown')"
     return 0
   fi
+
   log "未检测到 Codex CLI，开始自动安装 OpenAI Codex CLI。"
-  command -v npm >/dev/null 2>&1 || die "openai-codex 模式需要 npm，但当前未检测到 npm。请先安装 Node.js/npm。"
-  if npm install -g @openai/codex; then
-    :
+  npm_bin="$(find_user_command npm || true)"
+  [[ -n "$npm_bin" ]] || die "root PATH 与原 sudo 用户环境中均未检测到 npm。请先安装 Node.js/npm。"
+  log "使用 npm：${npm_bin} ($($npm_bin --version 2>/dev/null || printf 'version unknown'))"
+
+  # 如果 npm 来自用户级 nvm，直接以该用户执行全局安装，避免 root secure_path/nvm 环境错位。
+  if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" && "$npm_bin" == /home/* ]]; then
+    npm_dir="$(dirname "$npm_bin")"
+    install_path="PATH=${npm_dir}:\$PATH"
+    if sudo -Hiu "$SUDO_USER" bash -lc "$install_path '$npm_bin' install -g @openai/codex"; then :; else
+      warn "Codex CLI 直连安装失败，尝试仅对本次 npm 命令使用 Xray HTTP 代理。"
+      sudo -Hiu "$SUDO_USER" bash -lc "HTTP_PROXY=http://127.0.0.1:10809 HTTPS_PROXY=http://127.0.0.1:10809 npm_config_proxy=http://127.0.0.1:10809 npm_config_https_proxy=http://127.0.0.1:10809 $install_path '$npm_bin' install -g @openai/codex" || die "Codex CLI 自动安装失败。"
+    fi
   else
-    warn "Codex CLI 直连安装失败，尝试仅对本次 npm 命令使用 Xray HTTP 代理。"
-    HTTP_PROXY=http://127.0.0.1:10809 HTTPS_PROXY=http://127.0.0.1:10809 \
-    npm_config_proxy=http://127.0.0.1:10809 npm_config_https_proxy=http://127.0.0.1:10809 \
-      npm install -g @openai/codex || die "Codex CLI 自动安装失败。"
+    if "$npm_bin" install -g @openai/codex; then :; else
+      warn "Codex CLI 直连安装失败，尝试仅对本次 npm 命令使用 Xray HTTP 代理。"
+      HTTP_PROXY=http://127.0.0.1:10809 HTTPS_PROXY=http://127.0.0.1:10809 npm_config_proxy=http://127.0.0.1:10809 npm_config_https_proxy=http://127.0.0.1:10809 "$npm_bin" install -g @openai/codex || die "Codex CLI 自动安装失败。"
+    fi
   fi
-  command -v codex >/dev/null 2>&1 || die "npm 已执行安装，但 codex 命令仍不可用。"
-  log "Codex CLI 安装完成：$(codex --version 2>/dev/null || printf 'version unknown')"
+
+  codex_bin="$(find_user_command codex || true)"
+  [[ -n "$codex_bin" ]] || die "npm 已执行安装，但仍无法定位 codex 命令。"
+  log "Codex CLI 安装完成：$($codex_bin --version 2>/dev/null || printf 'version unknown')"
 }
 
 if [[ "$PROVIDER" == "openai-codex" ]]; then
@@ -125,13 +144,14 @@ if [[ "$PROVIDER" == "openai-codex" ]]; then
   CODEX_AUTH_DIR="$(get_env CODEX_HOME)"; CODEX_AUTH_DIR="${CODEX_AUTH_DIR:-$CODEX_AUTH_DIR_DEFAULT}"
   mkdir -p "$CODEX_AUTH_DIR"; chmod 700 "$CODEX_AUTH_DIR"
   if [[ ! -s "$CODEX_AUTH_DIR/auth.json" ]]; then
+    CODEX_BIN="$(find_user_command codex || true)"
     cat <<EOF
 
 [需要一次性授权]
 Codex CLI 已准备好，Hindsight 使用独立凭据目录：${CODEX_AUTH_DIR}
 
 请执行：
-  sudo env CODEX_HOME=${CODEX_AUTH_DIR} codex login --device-auth
+  sudo env CODEX_HOME=${CODEX_AUTH_DIR} ${CODEX_BIN:-codex} login --device-auth
 
 按照终端提示，在你自己的浏览器完成 ChatGPT 授权。
 完成后重新运行：sudo bash setup.sh
@@ -153,7 +173,6 @@ fi
 cd "$APP_DIR"
 log "拉取 Hindsight 镜像。"; docker compose pull
 log "启动 Hindsight。"; docker compose up -d
-
 log "等待 API 启动（最多约 120 秒）。"
 ok=0
 for _ in $(seq 1 60); do
@@ -161,7 +180,6 @@ for _ in $(seq 1 60); do
   sleep 2
 done
 if (( ok == 0 )); then docker compose ps; docker compose logs --tail=100 hindsight || true; die "Hindsight 容器已启动，但 API 健康检查未在等待时间内通过。"; fi
-
 log "Hindsight API 已可从宿主机 127.0.0.1:8888 访问。"; docker compose ps
 echo
 printf '%s\n' "注意：当前采用 host network 是为了让 Hindsight 安全访问宿主机仅监听 127.0.0.1 的 Xray。" \
