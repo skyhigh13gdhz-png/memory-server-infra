@@ -1,215 +1,144 @@
 # memory-server-infra
 
-个人 AI 外置记忆系统的服务器基础设施仓库。
+一套面向个人 AI 外置记忆系统的 Ubuntu 服务器基础设施。
 
-这个仓库负责把一台干净的 Ubuntu 服务器自动化配置成可运行个人记忆服务的基础环境。目前已经在一台低配置 Ubuntu 测试服务器上完整跑通基础记忆层部署。
+目标不是把记忆绑定到某个 AI 客户端，而是在服务器上建立独立、可迁移的记忆基础层：当前以 Hindsight 为记忆引擎，后续由 Memory Gateway 向 ChatGPT、Qwen、Claude、Hermes、Codex 等不同客户端提供统一入口。
 
-## 当前架构
+> 本仓库是公开的部署代码仓库。真实个人记忆、OAuth 凭据、API Key、代理节点信息和备份数据均不进入 Git。
+
+## 架构
 
 ```text
-AI / Memory Gateway（下一阶段）
-             ↓
-        Hindsight
-     API 8888 / UI 9999
-             ↓
-   embedded PostgreSQL / pg0
-
-Hindsight 出站
-     ↓ HTTP_PROXY
-127.0.0.1:10809（Xray）
-     ↓
-   海外网络
+ChatGPT / Qwen / Claude / Hermes / Codex / future AI
+                         ↓
+                  Memory Gateway
+                    （下一阶段）
+                         ↓
+                     Hindsight
+                 API 8888 / UI 9999
+                         ↓
+              embedded PostgreSQL / pg0
 ```
 
-仓库当前负责：
+网络侧采用选择性出站：国内/本地服务保持直连，需要海外网络的流量由现有 Xray routing 决定。Hindsight 的 Codex 请求通过专属透明代理进入 Xray，不依赖应用是否支持 `HTTP_PROXY`。
 
-- 系统环境预检与 Swap 策略
-- Docker Engine / Docker Compose 安装
-- Docker daemon 经本机 Xray 出站
+## 已实现
+
+- Ubuntu 环境预检与自适应 Swap
+- Docker Engine / Docker Compose 自动安装
+- Docker daemon 经本机 Xray 拉取境外镜像
 - Hindsight 部署与持久化
-- ChatGPT / Codex OAuth 认证
-- Hindsight 8888/9999 本机访问隔离
-- 健康检查
-- Hindsight 数据备份与恢复
+- ChatGPT / Codex OAuth 登录及独立可刷新凭据目录
+- Hindsight 专属透明代理
+- 8888/9999 非 loopback IPv4/IPv6 防火墙隔离
+- systemd 开机恢复网络规则
+- Retain / Recall / Reflect 功能验收
+- Hindsight 数据卷备份与恢复脚本
+- Public GitHub 一键引导安装
 
-## 设计原则
+## 快速开始
 
-1. **自动化优先**：尽量通过脚本完成安装、检查、升级和恢复，避免依赖手工操作。
-2. **可重复执行**：安装脚本保持幂等，多次执行不应破坏已有环境。
-3. **敏感信息不进入 Git**：API Key、OAuth 凭据、数据库密码、VLESS 信息、真实记忆数据等只保存在服务器本地。
-4. **数据与代码分离**：仓库保存部署代码和模板，真实数据放在持久化卷或后续对象存储中。
-5. **默认不暴露服务**：Hindsight API/UI 不应直接暴露公网，后续统一由 Memory Gateway 提供受控访问入口。
-6. **中文优先**：README、脚本提示和运维说明优先使用中文，代码变量和标准技术术语保留英文。
+### 推荐：Public 仓库引导安装
 
-## 目录
+在一台已配置并运行 Xray 的 Ubuntu 服务器上：
 
-```text
-memory-server-infra/
-├── setup.sh
-├── scripts/
-│   ├── 00-preflight.sh
-│   ├── 01-system-init.sh
-│   ├── 02-install-docker.sh
-│   ├── 03-docker-proxy.sh
-│   ├── 04-hindsight-firewall.sh
-│   ├── 04-hindsight.sh
-│   ├── 05-backup.sh
-│   ├── 06-restore.sh
-│   └── health-check.sh
-├── docker/
-│   └── hindsight/
-│       ├── compose.yml
-│       └── .env.example
-└── README.md
+```bash
+curl -fsSL https://raw.githubusercontent.com/skyhigh13gdhz-png/memory-server-infra/main/bootstrap.sh | sudo bash
 ```
 
-## Hindsight 网络与安全设计
+引导脚本会：
 
-### 为什么当前使用 host network
+1. 检查并安装 Git；
+2. 创建源码目录 `/opt/src`；
+3. 通过 HTTPS 拉取/更新本 Public 仓库到 `/opt/src/memory-server-infra`；
+4. 执行正式 `setup.sh`；
+5. 敏感配置仅在服务器本地生成或读取。
 
-服务器上的 Xray HTTP 入站只监听：
+不再需要 GitHub Deploy Key、SSH alias 或私人仓库访问凭据。
 
-```text
-127.0.0.1:10809
+### 已经 clone 仓库
+
+```bash
+cd /opt/src/memory-server-infra
+git pull --ff-only
+sudo bash setup.sh
 ```
 
-Hindsight 需要通过该代理访问外部 LLM 服务。当前使用 Docker `host network`，使容器能够直接访问宿主机 loopback 上的 Xray，而不需要把 Xray 代理开放到 Docker bridge 或 `0.0.0.0`。
+部署流程共 8 个阶段：环境预检 → Swap → Docker → Docker/Xray → Hindsight 本机隔离 → Hindsight 部署 → Hindsight 专属透明代理 → 健康检查。
 
-代价是 Hindsight 自身默认会在宿主机所有地址监听：
+部署完成后建议执行真实功能验收：
 
-```text
-0.0.0.0:8888   Hindsight API
-0.0.0.0:9999   Hindsight Web UI
+```bash
+sudo bash scripts/07-hindsight-smoke-test.sh
 ```
 
-因此不能仅根据 `ss` 中的监听地址判断服务已经安全。
+## 源码与运行数据分离
 
-### 8888 / 9999 的隔离方式
-
-`scripts/04-hindsight-firewall.sh` 会建立主机 INPUT 防火墙规则：
-
-- loopback (`lo`) 访问 8888/9999：允许
-- 非 loopback IPv4 访问 8888/9999：DROP
-- 非 loopback IPv6 访问 8888/9999：DROP
-- 规则通过 `hindsight-local-only.service` 在开机后自动恢复
-
-因此当前模型为：
+推荐目录：
 
 ```text
-本机 / Memory Gateway
-        ↓
-127.0.0.1:8888 / 9999
-        ↓
-     Hindsight
-
-公网 / 其他网卡
-        ↓
-   主机防火墙 DROP
+/opt/
+├── src/
+│   └── memory-server-infra/      # Git 源码，可随时重新 clone
+└── memory-server-infra/          # 部署后的运行配置/状态
+    └── hindsight/
 ```
 
-健康检查会同时验证防火墙规则及 systemd 持久化状态。即使进程仍显示监听 `0.0.0.0:8888/9999`，只要非 loopback INPUT DROP 规则存在且持久化检查通过，就视为已完成主机层隔离。
+删除源码目录不应删除真实记忆数据；运行数据、OAuth 凭据和备份也不应反向进入源码仓库。
 
-> 后续 Memory Gateway 不应通过开放 Hindsight 8888/9999 实现远程访问，而应作为独立、可认证的入口层。
+## 网络与安全设计
 
-## Codex OAuth 凭据设计
+Hindsight 当前使用 Docker host network，以便访问宿主机 loopback 上的 Xray。Hindsight 自身可能显示监听 `0.0.0.0:8888` / `0.0.0.0:9999`，因此由 `scripts/04-hindsight-firewall.sh` 在主机 INPUT 层阻断所有非 loopback IPv4/IPv6 访问，并通过 systemd 在重启后恢复。
 
-Hindsight 使用 `openai-codex` Provider 时，不要求把 LLM API Key 写入 `.env`。
+Codex Provider 的 HTTP 客户端并不依赖 shell 代理环境，因此 `scripts/03-hindsight-transparent-proxy.sh` 只接管 Hindsight 运行 UID 的 TCP 出站，将其送入本机 Xray 透明入口；国内/海外的最终分流继续由 Xray routing 决定。
 
-服务器使用独立的 Codex OAuth 目录：
+当前实现按运行 UID 匹配，因此如果宿主机普通用户恰好与 Hindsight 使用相同 UID，该用户主动发起的 TCP 也可能命中该规则。它不会影响入站 SSH；后续可进一步升级为 cgroup/network namespace 级隔离。
+
+## Codex OAuth 凭据
+
+Hindsight 使用 `openai-codex` Provider 时无需把 OpenAI API Key 写入 `.env`。部署脚本会检测容器实际 UID/GID，在服务器本地准备独立 Codex 目录，并以可写方式挂载，使 Hindsight 能持久化 OAuth token 刷新状态。
+
+默认本地路径：
 
 ```text
 /var/lib/hindsight/codex/auth.json
 ```
 
-原始 OAuth 凭据保持严格权限，不直接放宽给容器用户。部署脚本会：
+该文件不进入 Git，`.gitignore` 也显式忽略 `auth.json`、`.env`、密钥、secrets、数据库和备份文件。
 
-1. 自动读取 Hindsight 镜像实际运行 UID/GID；
-2. 在服务器本地准备 Hindsight 专用凭据副本；
-3. 按容器实际 UID/GID 设置最小读取权限；
-4. 只把该文件挂载进 Hindsight；
-5. 凭据文件和内容永不提交 Git。
+## Public 仓库安全边界
 
-这样避免为了修复容器 `Permission denied` 而把原始 OAuth 文件改成全局可读。
+**允许提交：**脚本、Compose 模板、`.env.example`、文档、无敏感信息的测试逻辑。
 
-## 一键部署
+**禁止提交：**真实 `.env`、`auth.json`、API Key、OAuth token、VLESS/代理凭据、SSH 私钥、真实记忆数据、数据库 dump、备份文件。
 
-在已经配置好本机 Xray 的服务器上：
+仓库公开前已使用 Gitleaks 对当时完整 Git 历史进行扫描：46 commits、约 111.75 KB，结果 `no leaks found`。这不是未来提交可以放松检查的理由；新增敏感配置仍应坚持只落服务器本地。
 
-```bash
-git pull
-sudo bash setup.sh
-```
+## 已验证状态
 
-当前流程依次执行：
+测试环境：Ubuntu 24.04 / amd64 / 约 2GB RAM + Swap / Docker 29.8.0 / Compose v5.5.1。
 
-1. 环境预检
-2. 内存与 Swap 初始化
-3. Docker 安装/验证
-4. Docker → Xray 出站验证
-5. Hindsight 8888/9999 本机隔离
-6. Hindsight 部署
-7. 整体健康检查
+已经实际跑通：
 
-全部通过时应看到：
-
-```text
-结果：OK=... WARN=0 FAIL=0
-基础健康检查通过。
-```
-
-## 已实测环境
-
-基础部署链路已在以下测试环境完整跑通：
-
-- Ubuntu 24.04 (noble)
-- amd64
-- Docker Engine 29.8.0
-- Docker Compose v5.5.1
-- 约 2GB 物理 RAM
-- 约 10GB Swap
-- ext4
-- 本机 Xray HTTP 代理 `127.0.0.1:10809`
-- Hindsight `latest`
-- Codex CLI 0.154.0
+- Docker 安装、镜像拉取和 Xray 出站
+- Hindsight 启动与本机端口隔离
 - ChatGPT / Codex Device OAuth
+- GPT-5.6 Luna
+- Hindsight 专属透明代理
+- Retain → Recall → Reflect
+- Docker container restart 后功能恢复
+- 整机 reboot 后 Xray、Docker、透明代理和 Hindsight 自动启动
+- Public 前完整 Git 历史 Gitleaks 扫描无泄漏
 
-最终健康检查实测达到 `WARN=0 / FAIL=0`。
+仍需继续验证：
 
-### 低内存机器说明
+- 整机 reboot 后再次执行 Retain / Recall / Reflect，完成完整功能级重启闭环
+- Codex OAuth token 实际刷新周期后的长期稳定性
+- 备份 → 写入新数据 → 恢复 → 数据回滚闭环
+- 完整 `setup.sh` 重复执行幂等性回归
 
-Hindsight 官方总体最低建议高于当前测试机的约 2GB 物理 RAM，因此这里的成功结果只代表**安装、启动、认证、代理与网络隔离链路已跑通**，不代表 2GB RAM 已被验证适合长期生产负载。
+低配置测试机跑通不代表 2GB RAM 适合长期生产负载。正式服务器仍需持续观察 RAM、Swap、embedding/reranking 峰值和长期稳定性。
 
-正式服务器仍应继续观察：
+## 下一阶段
 
-- 实际记忆写入/检索时的 RAM 与 Swap 使用；
-- embedding / reranking 时的峰值资源；
-- 长时间运行稳定性；
-- 重启后的自动恢复；
-- 备份与恢复实测。
-
-## 当前验证状态
-
-已经实测通过：
-
-- Docker 自动安装与重复执行
-- Docker daemon 经 Xray 拉取镜像
-- Hindsight 镜像拉取与启动
-- Codex Device OAuth 经 Xray 完成授权
-- Hindsight 非 root 用户读取专用 OAuth 凭据
-- Hindsight API `127.0.0.1:8888/docs`
-- Hindsight Web UI `127.0.0.1:9999`
-- 8888/9999 非 loopback IPv4/IPv6 主机防火墙隔离
-- 防火墙规则 systemd 开机恢复配置
-- 一键部署最终健康检查 `WARN=0 / FAIL=0`
-
-仍需继续做真实验证：
-
-- 服务器重启后的完整恢复
-- Hindsight retain / recall / reflect 实际调用
-- Codex OAuth token 刷新后的长期稳定性
-- 备份与恢复闭环
-- `setup.sh` 再次重复执行的幂等性回归
-
-完成这些验证后，再把这套基础设施迁移到正式新服务器，并进入 Memory Gateway 接入阶段。
-
-> 本仓库不存放任何真实个人记忆数据、认证凭据或代理密钥。
+Memory Gateway 将成为稳定边界：负责客户端身份、认证、bank 隔离/共享策略以及统一的 retain / recall / reflect 语义。Hindsight 是当前记忆引擎，但客户端不直接绑定 Hindsight，从而保留未来替换或组合其他记忆引擎的空间。
