@@ -11,14 +11,16 @@ services:
       HINDSIGHT_API_WORKER_ID: ${HINDSIGHT_API_WORKER_ID:-memory-server-main}
       HINDSIGHT_API_LLM_MAX_CONCURRENT: ${HINDSIGHT_API_LLM_MAX_CONCURRENT:-2}
       CODEX_HOME: /var/lib/hindsight/codex
+      # 保留显式代理变量，供会读取环境代理的 provider/工具使用。
+      # Codex provider 当前 aiohttp 不读取这些变量，另由 scoped transparent proxy 解决。
       HTTP_PROXY: ${HINDSIGHT_HTTP_PROXY:-http://127.0.0.1:10809}
       HTTPS_PROXY: ${HINDSIGHT_HTTP_PROXY:-http://127.0.0.1:10809}
       NO_PROXY: ${HINDSIGHT_NO_PROXY:-localhost,127.0.0.1,::1}
     volumes:
       - hindsight-data:/home/hindsight/.pg0
-      # 宿主机 Codex 凭据目录保持 0700；只把 auth.json 文件只读挂载给容器，
-      # 避免 Hindsight 的非 root 用户因宿主机目录权限无法遍历而 Permission denied。
-      - ${HINDSIGHT_CODEX_AUTH_DIR:-/var/lib/hindsight/codex}/auth.json:/var/lib/hindsight/codex/auth.json:ro
+      # Hindsight 的 Codex provider 会自动刷新 OAuth token，并原子写回 auth.json。
+      # 因此挂载独立凭据目录为 rw；宿主机目录仅授权给 Hindsight 运行 UID/GID。
+      - ${HINDSIGHT_CODEX_AUTH_DIR:-/var/lib/hindsight/codex}:/var/lib/hindsight/codex:rw
 
 volumes:
   hindsight-data:
