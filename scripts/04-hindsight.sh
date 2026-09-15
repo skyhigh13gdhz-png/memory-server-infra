@@ -1,146 +1,35 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
-
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-APP_DIR="${APP_DIR:-/opt/memory-server-infra/hindsight}"
-SOURCE_DIR="${ROOT_DIR}/docker/hindsight"
-ENV_FILE="${APP_DIR}/.env"
-CODEX_AUTH_DIR_DEFAULT="/var/lib/hindsight/codex"
-
-log(){ printf '\n[INFO] %s\n' "$*"; }
-warn(){ printf '\n[WARN] %s\n' "$*" >&2; }
-die(){ printf '\n[ERROR] %s\n' "$*" >&2; exit 1; }
-
+APP_DIR="${APP_DIR:-/opt/memory-server-infra/hindsight}"; SOURCE_DIR="${ROOT_DIR}/docker/hindsight"; ENV_FILE="${APP_DIR}/.env"; CODEX_AUTH_DIR_DEFAULT="/var/lib/hindsight/codex"
+log(){ printf '\n[INFO] %s\n' "$*"; }; warn(){ printf '\n[WARN] %s\n' "$*" >&2; }; die(){ printf '\n[ERROR] %s\n' "$*" >&2; exit 1; }
 [[ ${EUID} -eq 0 ]] || die "请使用 sudo/root 运行。"
-command -v docker >/dev/null 2>&1 || die "未检测到 Docker。"
-docker compose version >/dev/null 2>&1 || die "未检测到 Docker Compose plugin。"
-systemctl is-active --quiet docker || die "Docker 服务未运行。"
-systemctl is-active --quiet xray || die "Xray 服务未运行。"
+command -v docker >/dev/null 2>&1 || die "未检测到 Docker。"; docker compose version >/dev/null 2>&1 || die "未检测到 Docker Compose plugin。"; systemctl is-active --quiet docker || die "Docker 服务未运行。"; systemctl is-active --quiet xray || die "Xray 服务未运行。"
 [[ -f "${SOURCE_DIR}/compose.yml" && -f "${SOURCE_DIR}/.env.example" ]] || die "仓库中的 Hindsight 模板不完整。"
-
-MEM_MB="$(awk '/^MemTotal:/ {printf "%d", $2/1024}' /proc/meminfo)"
-SWAP_MB="$(awk '/^SwapTotal:/ {printf "%d", $2/1024}' /proc/meminfo)"
-FREE_MB="$(df -Pm /var/lib/docker 2>/dev/null | awk 'NR==2 {print $4}')"
-[[ -n "$FREE_MB" ]] || FREE_MB="$(df -Pm / | awk 'NR==2 {print $4}')"
-log "部署前资源：RAM ${MEM_MB} MB / Swap ${SWAP_MB} MB / Docker 所在分区可用约 ${FREE_MB} MB。"
-(( MEM_MB >= 4096 )) || warn "RAM 低于 Hindsight 官方建议的 4GB；将依赖低并发 + Swap 做实验性部署。"
-(( MEM_MB >= 4096 || SWAP_MB >= 2048 )) || die "低内存机器当前 Swap 也不足 2GB，请先运行 01-system-init.sh。"
-
-mkdir -p "$APP_DIR"
-install -m 0644 "${SOURCE_DIR}/compose.yml" "${APP_DIR}/compose.yml"
+MEM_MB="$(awk '/^MemTotal:/ {printf "%d", $2/1024}' /proc/meminfo)"; SWAP_MB="$(awk '/^SwapTotal:/ {printf "%d", $2/1024}' /proc/meminfo)"; FREE_MB="$(df -Pm /var/lib/docker 2>/dev/null | awk 'NR==2 {print $4}')"; [[ -n "$FREE_MB" ]] || FREE_MB="$(df -Pm / | awk 'NR==2 {print $4}')"
+log "部署前资源：RAM ${MEM_MB} MB / Swap ${SWAP_MB} MB / Docker 所在分区可用约 ${FREE_MB} MB。"; (( MEM_MB >= 4096 )) || warn "RAM 低于 Hindsight 官方建议的 4GB；将依赖低并发 + Swap 做实验性部署。"; (( MEM_MB >= 4096 || SWAP_MB >= 2048 )) || die "低内存机器当前 Swap 也不足 2GB，请先运行 01-system-init.sh。"
+mkdir -p "$APP_DIR"; install -m 0644 "${SOURCE_DIR}/compose.yml" "${APP_DIR}/compose.yml"
 get_env(){ local key="$1"; [[ -f "$ENV_FILE" ]] || return 0; awk -F= -v k="$key" '$1==k {sub(/^[^=]*=/,""); print; exit}' "$ENV_FILE"; }
 write_env_value(){ local key="$1" value="$2" tmp; tmp="$(mktemp)"; awk -F= -v k="$key" -v v="$value" 'BEGIN{done=0} $1==k {print k "=" v; done=1; next} {print} END{if(!done) print k "=" v}' "$ENV_FILE" >"$tmp"; install -m 0600 "$tmp" "$ENV_FILE"; rm -f "$tmp"; }
-
-first_config_wizard(){
-  install -m 0600 "${SOURCE_DIR}/.env.example" "$ENV_FILE"
-  cat <<'EOF'
+first_config_wizard(){ install -m 0600 "${SOURCE_DIR}/.env.example" "$ENV_FILE"; cat <<'EOF'
 
 ========== Hindsight LLM 首次配置 ==========
 
 请选择 Hindsight 使用的 LLM 认证方式：
-
   [1] ChatGPT / Codex OAuth（推荐）
       - 不需要单独申请 API Key
       - 适合已有 ChatGPT Plus / Pro 的用户
-      - 需要在浏览器中人工授权一次
-
+      - 安装器会自动启动登录，只需在浏览器完成一次授权
   [2] LLM API Key
       - 适用于 OpenAI / Gemini / Anthropic / DeepSeek / Groq / OpenRouter 等
-      - 需要 Provider、Model 和 API Key
       - API Key 仅写入本机 .env，不提交 Git
 EOF
-  local choice provider model api_key
-  while true; do
-    read -r -p "请输入 [1/2]: " choice
-    case "$choice" in
-      1) write_env_value HINDSIGHT_API_LLM_PROVIDER "openai-codex"; write_env_value HINDSIGHT_API_LLM_MODEL "gpt-5.4-mini"; write_env_value HINDSIGHT_API_LLM_API_KEY ""; write_env_value CODEX_HOME "$CODEX_AUTH_DIR_DEFAULT"; log "已选择 ChatGPT / Codex OAuth。"; break ;;
-      2) echo; read -r -p "Provider（例如 openai / gemini / anthropic / deepseek / groq / openrouter）: " provider; [[ -n "$provider" ]] || { warn "Provider 不能为空。"; continue; }; read -r -p "Model（填写该 Provider 实际支持的模型名）: " model; [[ -n "$model" ]] || { warn "Model 不能为空。"; continue; }; read -r -s -p "API Key（输入内容不会显示）: " api_key; echo; [[ -n "$api_key" ]] || { warn "API Key 不能为空。"; continue; }; write_env_value HINDSIGHT_API_LLM_PROVIDER "$provider"; write_env_value HINDSIGHT_API_LLM_MODEL "$model"; write_env_value HINDSIGHT_API_LLM_API_KEY "$api_key"; log "LLM API 配置已保存到服务器本地 ${ENV_FILE}。"; unset api_key; break ;;
-      *) warn "请输入 1 或 2。" ;;
-    esac
-  done
-}
-if [[ ! -f "$ENV_FILE" ]]; then first_config_wizard; fi
-chmod 600 "$ENV_FILE"
-PROVIDER="$(get_env HINDSIGHT_API_LLM_PROVIDER)"; API_KEY="$(get_env HINDSIGHT_API_LLM_API_KEY)"
-[[ -n "$PROVIDER" ]] || die "${ENV_FILE} 中缺少 HINDSIGHT_API_LLM_PROVIDER。"
-
-find_user_command(){
-  local name="$1" path="" sudo_user="${SUDO_USER:-}"
-  path="$(command -v "$name" 2>/dev/null || true)"
-  if [[ -n "$path" ]]; then printf '%s\n' "$path"; return 0; fi
-  if [[ -n "$sudo_user" && "$sudo_user" != "root" ]]; then
-    path="$(sudo -Hiu "$sudo_user" bash -lc "command -v $name" 2>/dev/null | tail -n1 || true)"
-    [[ -n "$path" && -x "$path" ]] && { printf '%s\n' "$path"; return 0; }
-  fi
-  return 1
-}
-
-# npm/codex 的 shebang 是 /usr/bin/env node；若它们来自 nvm，执行时必须把同目录加入 PATH。
-run_node_cli(){
-  local bin="$1"; shift
-  local bin_dir; bin_dir="$(dirname "$bin")"
-  env PATH="${bin_dir}:${PATH}" "$bin" "$@"
-}
-
-install_codex_cli(){
-  local codex_bin npm_bin npm_dir install_path
-  codex_bin="$(find_user_command codex || true)"
-  if [[ -n "$codex_bin" ]]; then log "Codex CLI 已安装：$(run_node_cli "$codex_bin" --version 2>/dev/null || printf 'version unknown')"; return 0; fi
-  log "未检测到 Codex CLI，开始自动安装 OpenAI Codex CLI。"
-  npm_bin="$(find_user_command npm || true)"
-  [[ -n "$npm_bin" ]] || die "root PATH 与原 sudo 用户环境中均未检测到 npm。请先安装 Node.js/npm。"
-  log "使用 npm：${npm_bin} ($(run_node_cli "$npm_bin" --version 2>/dev/null || printf 'version unknown'))"
-  if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" && "$npm_bin" == /home/* ]]; then
-    npm_dir="$(dirname "$npm_bin")"; install_path="PATH=${npm_dir}:\$PATH"
-    if sudo -Hiu "$SUDO_USER" bash -lc "$install_path '$npm_bin' install -g @openai/codex"; then :; else
-      warn "Codex CLI 直连安装失败，尝试仅对本次 npm 命令使用 Xray HTTP 代理。"
-      sudo -Hiu "$SUDO_USER" bash -lc "HTTP_PROXY=http://127.0.0.1:10809 HTTPS_PROXY=http://127.0.0.1:10809 npm_config_proxy=http://127.0.0.1:10809 npm_config_https_proxy=http://127.0.0.1:10809 $install_path '$npm_bin' install -g @openai/codex" || die "Codex CLI 自动安装失败。"
-    fi
-  else
-    if run_node_cli "$npm_bin" install -g @openai/codex; then :; else
-      warn "Codex CLI 直连安装失败，尝试仅对本次 npm 命令使用 Xray HTTP 代理。"
-      HTTP_PROXY=http://127.0.0.1:10809 HTTPS_PROXY=http://127.0.0.1:10809 npm_config_proxy=http://127.0.0.1:10809 npm_config_https_proxy=http://127.0.0.1:10809 run_node_cli "$npm_bin" install -g @openai/codex || die "Codex CLI 自动安装失败。"
-    fi
-  fi
-  codex_bin="$(find_user_command codex || true)"; [[ -n "$codex_bin" ]] || die "npm 已执行安装，但仍无法定位 codex 命令。"
-  log "Codex CLI 安装完成：$(run_node_cli "$codex_bin" --version 2>/dev/null || printf 'version unknown')"
-}
-
-if [[ "$PROVIDER" == "openai-codex" ]]; then
-  install_codex_cli
-  CODEX_AUTH_DIR="$(get_env CODEX_HOME)"; CODEX_AUTH_DIR="${CODEX_AUTH_DIR:-$CODEX_AUTH_DIR_DEFAULT}"
-  mkdir -p "$CODEX_AUTH_DIR"; chmod 700 "$CODEX_AUTH_DIR"
-  if [[ ! -s "$CODEX_AUTH_DIR/auth.json" ]]; then
-    CODEX_BIN="$(find_user_command codex || true)"; CODEX_BIN_DIR="$(dirname "${CODEX_BIN:-/usr/bin/codex}")"
-    cat <<EOF
-
-[需要一次性授权]
-Codex CLI 已准备好，Hindsight 使用独立凭据目录：${CODEX_AUTH_DIR}
-
-请执行：
-  sudo env CODEX_HOME=${CODEX_AUTH_DIR} PATH=${CODEX_BIN_DIR}:\$PATH ${CODEX_BIN:-codex} login --device-auth
-
-按照终端提示，在你自己的浏览器完成 ChatGPT 授权。
-完成后重新运行：sudo bash setup.sh
-
-不要把 auth.json 内容发到聊天中，也不要提交 Git。
-EOF
-    exit 20
-  fi
-  log "已检测到独立 Codex OAuth 凭据；无需 LLM API Key。"
-else
-  [[ -n "$API_KEY" ]] || die "当前 Provider=${PROVIDER} 需要 API Key，但 HINDSIGHT_API_LLM_API_KEY 为空。"
-fi
-
-IMAGE_TAG="$(get_env HINDSIGHT_IMAGE_TAG)"; IMAGE_TAG="${IMAGE_TAG:-latest}"
-if [[ "$IMAGE_TAG" == "latest" && "$FREE_MB" -lt 12288 ]]; then die "Full Hindsight 镜像较大；当前 Docker 分区可用空间约 ${FREE_MB} MB，不足安全阈值 12GB。请先扩容或评估 slim 方案。"; fi
-cd "$APP_DIR"
-log "拉取 Hindsight 镜像。"; docker compose pull
-log "启动 Hindsight。"; docker compose up -d
-log "等待 API 启动（最多约 120 秒）。"
-ok=0
-for _ in $(seq 1 60); do if curl -fsS --max-time 2 http://127.0.0.1:8888/ >/dev/null 2>&1 || curl -fsS --max-time 2 http://127.0.0.1:8888/docs >/dev/null 2>&1; then ok=1; break; fi; sleep 2; done
-if (( ok == 0 )); then docker compose ps; docker compose logs --tail=100 hindsight || true; die "Hindsight 容器已启动，但 API 健康检查未在等待时间内通过。"; fi
-log "Hindsight API 已可从宿主机 127.0.0.1:8888 访问。"; docker compose ps
-echo
-printf '%s\n' "注意：当前采用 host network 是为了让 Hindsight 安全访问宿主机仅监听 127.0.0.1 的 Xray。" "这也意味着 Hindsight 8888/9999 的监听范围需要在下一阶段做安全检查，确认不会意外暴露公网。"
+local choice provider model api_key; while true; do read -r -p "请输入 [1/2]: " choice; case "$choice" in 1) write_env_value HINDSIGHT_API_LLM_PROVIDER "openai-codex"; write_env_value HINDSIGHT_API_LLM_MODEL "gpt-5.4-mini"; write_env_value HINDSIGHT_API_LLM_API_KEY ""; write_env_value CODEX_HOME "$CODEX_AUTH_DIR_DEFAULT"; log "已选择 ChatGPT / Codex OAuth。"; break;; 2) echo; read -r -p "Provider: " provider; [[ -n "$provider" ]] || { warn "Provider 不能为空。"; continue; }; read -r -p "Model: " model; [[ -n "$model" ]] || { warn "Model 不能为空。"; continue; }; read -r -s -p "API Key（输入内容不会显示）: " api_key; echo; [[ -n "$api_key" ]] || { warn "API Key 不能为空。"; continue; }; write_env_value HINDSIGHT_API_LLM_PROVIDER "$provider"; write_env_value HINDSIGHT_API_LLM_MODEL "$model"; write_env_value HINDSIGHT_API_LLM_API_KEY "$api_key"; unset api_key; log "LLM API 配置已保存到服务器本地 ${ENV_FILE}。"; break;; *) warn "请输入 1 或 2。";; esac; done; }
+[[ -f "$ENV_FILE" ]] || first_config_wizard; chmod 600 "$ENV_FILE"; PROVIDER="$(get_env HINDSIGHT_API_LLM_PROVIDER)"; API_KEY="$(get_env HINDSIGHT_API_LLM_API_KEY)"; [[ -n "$PROVIDER" ]] || die "${ENV_FILE} 中缺少 HINDSIGHT_API_LLM_PROVIDER。"
+find_user_command(){ local name="$1" path="" sudo_user="${SUDO_USER:-}"; path="$(command -v "$name" 2>/dev/null || true)"; if [[ -n "$path" ]]; then printf '%s\n' "$path"; return 0; fi; if [[ -n "$sudo_user" && "$sudo_user" != root ]]; then path="$(sudo -Hiu "$sudo_user" bash -lc "command -v $name" 2>/dev/null | tail -n1 || true)"; [[ -n "$path" && -x "$path" ]] && { printf '%s\n' "$path"; return 0; }; fi; return 1; }
+run_node_cli(){ local bin="$1"; shift; local bin_dir; bin_dir="$(dirname "$bin")"; env PATH="${bin_dir}:${PATH}" "$bin" "$@"; }
+install_codex_cli(){ local codex_bin npm_bin npm_dir install_path; codex_bin="$(find_user_command codex || true)"; if [[ -n "$codex_bin" ]]; then log "Codex CLI 已安装：$(run_node_cli "$codex_bin" --version)"; return; fi; log "未检测到 Codex CLI，开始自动安装 OpenAI Codex CLI。"; npm_bin="$(find_user_command npm || true)"; [[ -n "$npm_bin" ]] || die "root PATH 与原 sudo 用户环境中均未检测到 npm。"; log "使用 npm：${npm_bin} ($(run_node_cli "$npm_bin" --version))"; if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root && "$npm_bin" == /home/* ]]; then npm_dir="$(dirname "$npm_bin")"; install_path="PATH=${npm_dir}:\$PATH"; sudo -Hiu "$SUDO_USER" bash -lc "$install_path '$npm_bin' install -g @openai/codex" || { warn "直连安装失败，改用 Xray。"; sudo -Hiu "$SUDO_USER" bash -lc "HTTP_PROXY=http://127.0.0.1:10809 HTTPS_PROXY=http://127.0.0.1:10809 npm_config_proxy=http://127.0.0.1:10809 npm_config_https_proxy=http://127.0.0.1:10809 $install_path '$npm_bin' install -g @openai/codex" || die "Codex CLI 自动安装失败。"; }; else run_node_cli "$npm_bin" install -g @openai/codex || HTTP_PROXY=http://127.0.0.1:10809 HTTPS_PROXY=http://127.0.0.1:10809 npm_config_proxy=http://127.0.0.1:10809 npm_config_https_proxy=http://127.0.0.1:10809 run_node_cli "$npm_bin" install -g @openai/codex || die "Codex CLI 自动安装失败。"; fi; codex_bin="$(find_user_command codex || true)"; [[ -n "$codex_bin" ]] || die "安装后仍无法定位 codex。"; log "Codex CLI 安装完成：$(run_node_cli "$codex_bin" --version)"; }
+run_codex_oauth(){ local codex_bin="$1" auth_dir="$2" bin_dir; bin_dir="$(dirname "$codex_bin")"; echo; printf '%s\n' "========== ChatGPT / Codex 一次性授权 ==========" "安装器现在会启动 Codex Device Auth。" "请按随后终端显示的地址/设备码，在你自己的浏览器完成授权。" "授权成功后本脚本会自动继续，不需要重新运行 setup.sh。"; echo; CODEX_HOME="$auth_dir" PATH="${bin_dir}:${PATH}" "$codex_bin" login --device-auth || die "Codex OAuth 授权未成功完成。"; [[ -s "$auth_dir/auth.json" ]] || die "Codex 登录命令已结束，但未找到 ${auth_dir}/auth.json。"; chmod 600 "$auth_dir/auth.json"; log "Codex OAuth 授权完成，继续部署 Hindsight。"; }
+if [[ "$PROVIDER" == openai-codex ]]; then install_codex_cli; CODEX_AUTH_DIR="$(get_env CODEX_HOME)"; CODEX_AUTH_DIR="${CODEX_AUTH_DIR:-$CODEX_AUTH_DIR_DEFAULT}"; mkdir -p "$CODEX_AUTH_DIR"; chmod 700 "$CODEX_AUTH_DIR"; CODEX_BIN="$(find_user_command codex || true)"; [[ -n "$CODEX_BIN" ]] || die "无法定位 Codex CLI。"; [[ -s "$CODEX_AUTH_DIR/auth.json" ]] || run_codex_oauth "$CODEX_BIN" "$CODEX_AUTH_DIR"; log "已检测到独立 Codex OAuth 凭据；无需 LLM API Key。"; else [[ -n "$API_KEY" ]] || die "当前 Provider=${PROVIDER} 需要 API Key，但 HINDSIGHT_API_LLM_API_KEY 为空。"; fi
+IMAGE_TAG="$(get_env HINDSIGHT_IMAGE_TAG)"; IMAGE_TAG="${IMAGE_TAG:-latest}"; if [[ "$IMAGE_TAG" == latest && "$FREE_MB" -lt 12288 ]]; then die "Full Hindsight 镜像较大；当前 Docker 分区可用空间约 ${FREE_MB} MB，不足安全阈值 12GB。"; fi
+cd "$APP_DIR"; log "拉取 Hindsight 镜像。"; docker compose pull; log "启动 Hindsight。"; docker compose up -d; log "等待 API 启动（最多约 120 秒）。"; ok=0; for _ in $(seq 1 60); do if curl -fsS --max-time 2 http://127.0.0.1:8888/ >/dev/null 2>&1 || curl -fsS --max-time 2 http://127.0.0.1:8888/docs >/dev/null 2>&1; then ok=1; break; fi; sleep 2; done; if (( ok == 0 )); then docker compose ps; docker compose logs --tail=100 hindsight || true; die "Hindsight 容器已启动，但 API 健康检查未在等待时间内通过。"; fi; log "Hindsight API 已可从宿主机 127.0.0.1:8888 访问。"; docker compose ps; echo; printf '%s\n' "注意：当前采用 host network 是为了让 Hindsight 安全访问宿主机仅监听 127.0.0.1 的 Xray。" "这也意味着 Hindsight 8888/9999 的监听范围需要在下一阶段做安全检查，确认不会意外暴露公网。"
