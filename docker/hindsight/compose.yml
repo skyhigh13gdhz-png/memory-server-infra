@@ -1,0 +1,21 @@
+services:
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:${HINDSIGHT_IMAGE_TAG:-latest}
+    container_name: hindsight
+    restart: unless-stopped
+    network_mode: host
+    shm_size: 1gb
+    env_file:
+      - .env
+    environment:
+      HINDSIGHT_API_WORKER_ID: ${HINDSIGHT_API_WORKER_ID:-memory-server-main}
+      HINDSIGHT_API_LLM_MAX_CONCURRENT: ${HINDSIGHT_API_LLM_MAX_CONCURRENT:-2}
+      HTTP_PROXY: ${HINDSIGHT_HTTP_PROXY:-http://127.0.0.1:10809}
+      HTTPS_PROXY: ${HINDSIGHT_HTTP_PROXY:-http://127.0.0.1:10809}
+      NO_PROXY: ${HINDSIGHT_NO_PROXY:-localhost,127.0.0.1,::1}
+    volumes:
+      - hindsight-data:/home/hindsight/.pg0
+
+volumes:
+  hindsight-data:
+    name: hindsight-data
