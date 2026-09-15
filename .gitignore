@@ -1,0 +1,24 @@
+# Secrets / local configuration
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.secret
+
+# Runtime data
+/data/
+/raw/
+/backups/
+*.dump
+*.sql
+*.sqlite*
+
+# Hindsight local state
+.hindsight/
+.pg0/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
