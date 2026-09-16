@@ -115,6 +115,34 @@ https://gitee.com/skyhigh13/ubuntu-vps-proxy-kit/tree/mainland_vps_use_proxy
 
 当前仓库已经覆盖：Ubuntu/Swap 初始化、Docker、Docker 出站、Hindsight 部署与持久化、Codex OAuth 本地凭据、Hindsight 专属透明代理、本机端口隔离、Retain/Recall/Reflect 验收、备份恢复和灾备时间点回滚。
 
+## 统一入口：bootstrap.sh
+
+**普通用户只需要记住 `bootstrap.sh`。安装、更新、修复、重复部署都从它进入。**
+
+`setup.sh` 是 bootstrap 内部调用的部署执行器，不是面向普通用户的独立入口。除开发调试外，不需要直接运行 `setup.sh`。
+
+```text
+用户
+ ↓
+bootstrap.sh            ← 唯一推荐入口
+ │
+ ├─ 检查基础工具与代码下载网络
+ ├─ 选择 GitHub / Gitee 代码源
+ ├─ 检查 Xray 海外网络
+ ├─ 必要时调用 ubuntu-vps-proxy-kit
+ ├─ 获取或更新 memory-server-infra
+ ↓
+setup.sh                ← bootstrap 自动调用
+ │
+ ├─ 系统 / Swap
+ ├─ Docker
+ ├─ Docker → Xray
+ ├─ Hindsight
+ ├─ 安全隔离
+ ├─ Hindsight 专属透明代理
+ └─ health-check
+```
+
 ## 快速开始
 
 > 当前建议先在测试环境使用。完整 GPT → Memory Gateway → Memory Server 链路完成后，再进行正式新服务器全新部署验收。
@@ -131,33 +159,18 @@ curl -fsSL https://gitee.com/skyhigh13/memory-server-infra/raw/main/bootstrap.sh
 curl -fsSL https://raw.githubusercontent.com/skyhigh13gdhz-png/memory-server-infra/main/bootstrap.sh | sudo bash
 ```
 
-两个入口运行同一套安装逻辑。bootstrap 会：
+两个入口运行同一套 bootstrap 安装逻辑。
 
-```text
-检查基础工具
-    ↓
-检测 GitHub / Gitee
-    ↓
-选择可用代码源
-    ↓
-检查服务器是否已有 Xray 海外网络
-    ↓
-没有时询问是否需要配置
-    ↓
-如选择配置，调用 ubuntu-vps-proxy-kit
-    ↓
-获取 memory-server-infra
-    ↓
-Docker / Hindsight / 安全 / 备份相关正式部署
-```
+### 已经 clone 过仓库
 
-已经 clone 当前仓库时：
+仍然运行统一入口，不需要手工 `git pull`，也不要改成直接执行 `setup.sh`：
 
 ```bash
 cd /opt/src/memory-server-infra
-git pull --ff-only
-sudo bash setup.sh
+sudo bash bootstrap.sh
 ```
+
+bootstrap 会负责检查网络并获取/更新 `/opt/src/memory-server-infra` 中的部署代码，然后自动调用内部 `setup.sh`。
 
 源码默认位于 `/opt/src/memory-server-infra`，运行数据位于 `/opt/memory-server-infra`，两者分离。
 
