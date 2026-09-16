@@ -77,7 +77,6 @@ PY
 }
 
 cleanup_output_jumps(){
-  # 删除所有历史 jump，包括旧版 --uid-owner 规则和重复规则。
   while read -r rule; do
     [[ -n "$rule" ]] || continue
     local del="${rule/-A OUTPUT/-D OUTPUT}"
@@ -100,7 +99,6 @@ apply_rules(){
   cleanup_output_jumps
   build_chain
   iptables -t nat -A OUTPUT -p tcp -m cgroup --path "$cgroup" -j "$CHAIN"
-  ok "透明代理已限定到 Hindsight 容器，不再按宿主机 UID 匹配"
   info "Hindsight cgroup：$cgroup"
 }
 
@@ -167,6 +165,20 @@ EOF
   systemctl enable "$SERVICE" >/dev/null
 }
 
+verify_install(){
+  local cgroup="$1" jump_count uid_count
+  systemctl is-enabled --quiet "$SERVICE" || die "透明代理服务没有设置为开机自动恢复。"
+  systemctl is-active --quiet "$SERVICE" || die "透明代理服务当前没有正常运行。"
+  ss -lnt 2>/dev/null | grep -qE "127\\.0\\.0\\.1:${TPROXY_PORT}\\b" || die "Xray 透明入口 127.0.0.1:${TPROXY_PORT} 未监听。"
+  jump_count="$(iptables -t nat -S OUTPUT 2>/dev/null | grep -F -- "-j $CHAIN" | wc -l)"
+  uid_count="$(iptables -t nat -S OUTPUT 2>/dev/null | grep -F -- "-j $CHAIN" | grep -c -- '--uid-owner' || true)"
+  [[ "$jump_count" == "1" ]] || die "OUTPUT 中 Hindsight 透明代理 jump 数量异常：${jump_count}（期望 1）。"
+  [[ "$uid_count" == "0" ]] || die "仍发现旧版 --uid-owner 透明代理规则，已停止继续。"
+  iptables -t nat -S OUTPUT 2>/dev/null | grep -F -- "--path $cgroup" | grep -Fq -- "-j $CHAIN" || die "没有找到当前 Hindsight cgroup 对应的 OUTPUT 规则。"
+  ok "Hindsight 专属透明代理服务：当前运行正常，且已设置开机自动恢复"
+  ok "透明代理规则：当前 cgroup jump 唯一，未发现旧版 UID jump"
+}
+
 remove_rules(){
   cleanup_output_jumps
   iptables -t nat -F "$CHAIN" 2>/dev/null || true
@@ -181,10 +193,14 @@ status(){
   local cgroup="$(resolve_hindsight_cgroup)"
   printf 'Hindsight cgroup: %s\n' "$cgroup"
   printf 'Transparent port: %s\n' "$TPROXY_PORT"
-  systemctl is-active xray || true
-  systemctl is-enabled "$SERVICE" 2>/dev/null || true
+  printf 'Xray service: '; systemctl is-active xray || true
+  printf 'Transparent proxy service active: '; systemctl is-active "$SERVICE" 2>/dev/null || true
+  printf 'Transparent proxy service enabled: '; systemctl is-enabled "$SERVICE" 2>/dev/null || true
+  printf '%s\n' 'OUTPUT rules:'
   iptables -t nat -S OUTPUT | grep -F "$CHAIN" || true
+  printf '%s\n' 'Proxy chain:'
   iptables -t nat -S "$CHAIN" 2>/dev/null || true
+  printf '%s\n' 'Transparent listener:'
   ss -lntp | grep ":${TPROXY_PORT} " || true
 }
 
@@ -196,8 +212,10 @@ case "${1:-install}" in
     apply_rules "$cgroup"
     write_helper
     write_service
-    ok "Hindsight 专属海外网络已安装；宿主机 ubuntu 用户不会再因 UID 相同被误代理"
-    info "下一步建议运行：sudo bash scripts/03-hindsight-transparent-proxy.sh status"
+    info "正在启动并验证 Hindsight 专属透明代理服务……"
+    systemctl restart "$SERVICE"
+    verify_install "$cgroup"
+    ok "Hindsight 专属海外网络已安装"
     ;;
   remove) remove_rules ;;
   status) status ;;
