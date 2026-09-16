@@ -6,8 +6,8 @@ CURRENT_STEP="启动"
 
 log(){ printf '\n========== %s ==========\n' "$*"; }
 die(){ printf '\n[✗] %s\n' "$*" >&2; exit 1; }
-trap 'rc=$?; printf "\n[✗] 部署失败\n阶段：%s\n总入口行号：%s\n命令：%s\n退出码：%s\n\n[→] 修复后可直接重新执行 sudo bash setup.sh；已完成步骤应保持幂等。\n" "$CURRENT_STEP" "$LINENO" "$BASH_COMMAND" "$rc" >&2; exit "$rc"' ERR
-[[ ${EUID} -eq 0 ]] || die "请使用 sudo/root 运行：sudo bash setup.sh"
+trap 'rc=$?; printf "\n[✗] 部署失败\n阶段：%s\n总入口行号：%s\n命令：%s\n退出码：%s\n\n[→] 修复后请重新运行统一入口 bootstrap.sh；它会复用已完成步骤并继续部署。\n" "$CURRENT_STEP" "$LINENO" "$BASH_COMMAND" "$rc" >&2; exit "$rc"' ERR
+[[ ${EUID} -eq 0 ]] || die "请使用统一入口运行：sudo bash bootstrap.sh"
 
 run_step(){
   local file="$1" title="$2"
@@ -20,9 +20,12 @@ run_step(){
 
 main(){
 cat <<'EOF'
-memory-server-infra 一键部署
+memory-server-infra 内部部署执行器
 
-本脚本会根据当前服务器环境自适应执行：
+说明：普通安装、更新、修复统一使用 bootstrap.sh。
+setup.sh 由 bootstrap 自动调用，一般不需要用户直接运行。
+
+本执行器会根据当前服务器环境自适应执行：
 1. 只读环境检查
 2. 根据 RAM / 已有 Swap / 磁盘空间决定是否配置 Swap
 3. 安装或验证 Docker Engine + Compose
