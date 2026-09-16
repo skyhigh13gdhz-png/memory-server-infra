@@ -78,6 +78,6 @@ run_step "${SCRIPTS_DIR}/health-check.sh" "8/8 整体健康检查" --verbose
 CURRENT_STEP="完成"
 CURRENT_FILE=""
 log "部署流程完成"
-printf '[✓] 服务器基础记忆层部署完成。\n[→] 建议继续运行：sudo bash scripts/07-hindsight-smoke-test.sh\n'
+printf '[✓] 服务器基础记忆层部署完成。\n[→] 建议继续运行功能验收：sudo bash %s/07-hindsight-smoke-test.sh\n' "$SCRIPTS_DIR"
 }
 main "$@"
