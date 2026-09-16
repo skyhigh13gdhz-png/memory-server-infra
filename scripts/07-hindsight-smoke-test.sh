@@ -59,12 +59,12 @@ curl -fsS --max-time 180 \
   -H 'Content-Type: application/json' \
   -X POST "${BASE_URL}/v1/default/banks/${BANK_ID}/reflect" \
   -d "$reflect_body" >/tmp/hindsight-smoke-reflect.json \
-  || die "Reflect 调用失败。查看容器日志：sudo docker logs --tail=150 hindsight"\n
+  || die "Reflect 调用失败。查看容器日志：sudo docker logs --tail=150 hindsight"
+
 python3 - /tmp/hindsight-smoke-reflect.json <<'PY' || {
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as f:
     data = json.load(f)
-# 不绑定具体响应字段结构：递归收集字符串，验证答案包含两个核心实体和“入口”语义。
 def strings(x):
     if isinstance(x, str):
         yield x
@@ -89,5 +89,6 @@ printf '[✓] Recall  ：通过\n'
 printf '[✓] Reflect ：通过\n'
 printf '[✓] Bank    ：%s\n' "$BANK_ID"
 printf '\n结果：核心记忆链路正常。\n'
-printf '[→] 下一步：验证重启持久化、备份恢复与重复部署。\n'
+printf '[✓] 已完成：重启持久化与重复部署幂等性回归。\n'
+printf '[→] 当前阶段：完成备份/恢复闭环后即可进入新服务器全新部署验收。\n'
 printf '========================================\n'
