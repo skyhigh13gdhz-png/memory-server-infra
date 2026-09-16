@@ -1,52 +1,99 @@
 # memory-server-infra
 
-一套面向个人 AI 外置记忆系统的 Ubuntu 服务器基础设施。
+**Hindsight 记忆服务器的部署与运维仓库。**
 
-目标不是把记忆绑定到某个 AI 客户端，而是在服务器上建立独立、可迁移的记忆基础层：当前以 Hindsight 为记忆引擎，后续由 Memory Gateway 向 ChatGPT、Qwen、WorkBuddy、Claude、Hermes、Codex 等不同客户端提供统一入口。
+这个仓库不是整套个人 AI 外置记忆系统，也不负责 ChatGPT、Qwen、Claude 等客户端接入；它只负责把整套架构中的 **Memory Server / Hindsight 基础设施层** 在 Ubuntu VPS 上安装好、保护好、备份好，并保证重启和恢复后仍可工作。
+
+```text
+完整系统（本仓库只负责 [ ] 内的部分）
+
+ChatGPT / Qwen / WorkBuddy / Claude / Hermes / Codex / future AI
+                              ↓
+                       Memory Gateway          ← 其他仓库/下一阶段
+                              ↓
+        ┌─────────────────────────────────────┐
+        │ [ memory-server-infra 负责的范围 ] │
+        │                                     │
+        │             Hindsight               │
+        │                 ↓                   │
+        │     Hindsight 持久化 / 备份 / 网络   │
+        └─────────────────────────────────────┘
+                              ↓
+        Raw Store / object storage            ← 后续独立数据层
+```
+
+换句话说：**这个仓库解决“记忆服务器怎么稳定跑起来”，Memory Gateway 解决“不同 AI 怎么统一访问记忆”。**
+
+当前仓库负责 Ubuntu 环境、Docker、Hindsight、Hindsight 数据持久化、网络出站、安全隔离、健康检查、备份/恢复和灾备验收。它不会把客户端直接绑定到 Hindsight。
 
 > 本仓库是公开部署代码。真实个人记忆、OAuth 凭据、API Key、代理节点信息和备份数据均不进入 Git。
 
-## 最终目标
+## 它在完整架构中的位置
+
+完整目标架构是：
 
 ```text
-ChatGPT / Qwen / WorkBuddy / Claude / Hermes / Codex / future AI
-                              ↓
-                       Memory Gateway
-                              ↓
-                         Hindsight
-                              ↓
-                Raw Store / PostgreSQL / object storage
+AI 客户端
+   ↓
+Memory Gateway          # 稳定的跨客户端入口
+   ↓
+Hindsight               # 当前语义记忆引擎，本仓库负责部署
+   ↓
+持久化数据
+
+Raw Store / object storage 会作为长期原始资料层独立建设。
 ```
 
-Memory Gateway 是稳定边界；Hindsight 是当前记忆引擎。客户端不直接绑定 Hindsight。
+因此以后即使更换 AI 客户端，或者未来替换/组合 Hindsight，服务器部署层和 Gateway 的职责仍然可以保持清晰分离。
 
-## 代码仓与镜像规则
+## 与其他仓库的关系
 
-**GitHub 是唯一可写主仓 / Source of Truth；Gitee 是只读的中国大陆部署镜像。**
+目前这个部署链路会用到另一个仓库 `ubuntu-vps-proxy-kit`，但两者职责不同：
 
-代码修改、版本演进和提交只发生在 GitHub。Gitee 仓库只从 GitHub 单向同步，不在 Gitee 单独修改代码，避免双仓分叉。
+```text
+ubuntu-vps-proxy-kit
+        │
+        │ 只负责给中国大陆 VPS 准备可选择性使用的海外网络能力
+        │ 例如 GitHub / GHCR / OpenAI / Codex
+        ↓
+memory-server-infra
+        │
+        │ 负责 Docker + Hindsight + 安全隔离 + 备份恢复
+        ↓
+Hindsight Memory Server
+```
 
-### memory-server-infra
+### memory-server-infra（当前仓库）
+
+用途：**部署和维护 Hindsight 记忆服务器。**
 
 GitHub 主仓：
 
 https://github.com/skyhigh13gdhz-png/memory-server-infra
 
-Gitee 大陆镜像：
+Gitee 中国大陆镜像：
 
 https://gitee.com/skyhigh13/memory-server-infra
 
-### ubuntu-vps-proxy-kit
+### ubuntu-vps-proxy-kit（安装时可能调用的网络工具）
 
-GitHub 主仓：
+用途：**为中国大陆 Ubuntu VPS 安装和管理 Xray 出站能力。** `memory-server-infra` 本身不保存 VLESS 节点信息；当服务器需要访问 GitHub/GHCR/OpenAI/Codex 等海外资源、又没有现成网络方案时，bootstrap 可以调用这个工具。国内流量与海外流量的具体分流由 Xray routing 处理。
+
+它是安装辅助依赖，不是 Memory Server 的记忆组件；如果服务器已经有可用的网络方案，就不需要重新安装它。
+
+GitHub 主仓（使用 `mainland_vps_use_proxy` 分支）：
 
 https://github.com/skyhigh13gdhz-png/ubuntu-vps-proxy-kit/tree/mainland_vps_use_proxy
 
-Gitee 大陆镜像：
+Gitee 中国大陆镜像：
 
 https://gitee.com/skyhigh13/ubuntu-vps-proxy-kit/tree/mainland_vps_use_proxy
 
-约定：
+## GitHub / Gitee 镜像规则
+
+**GitHub 是唯一可写主仓 / Source of Truth；Gitee 只作为中国大陆部署镜像。**
+
+所有代码修改、版本演进和 commit 只发生在 GitHub。Gitee 只从 GitHub 单向同步，不在 Gitee 单独修改，避免两个仓库产生不同历史。
 
 ```text
 开发 / Codex / ChatGPT 修改
@@ -60,15 +107,15 @@ https://gitee.com/skyhigh13/ubuntu-vps-proxy-kit/tree/mainland_vps_use_proxy
      中国大陆 VPS
 ```
 
-中国大陆 VPS 可以优先从 Gitee 获取安装代码；海外 VPS 可以直接使用 GitHub。新的 `bootstrap.sh` 会检测 GitHub/Gitee 可达性并选择可用代码源。
+中国大陆 VPS 优先考虑 Gitee；海外 VPS 通常直接使用 GitHub。`bootstrap.sh` 会检测两者可达性并选择可用代码源。
 
-> Gitee 解决的是“安装代码从哪里下载”，不能代替运行时海外网络。GHCR、OpenAI、Codex 等仍可能需要 Xray 或其他合适的海外网络方案。
+> Gitee 解决的是“安装代码从哪里下载”，不能代替运行时海外网络。GHCR、OpenAI、Codex 等仍可能需要 Xray 或其他海外网络方案。
 
 ## 当前已经做到什么
 
 目前已经证明：普通 Ubuntu 服务器可以稳定运行 Hindsight，而且服务器重启、重复安装和数据库恢复之后，记忆服务仍能恢复正常。
 
-已经实现：Ubuntu/Swap 初始化、Docker、Xray 出站、Hindsight 部署与持久化、Codex OAuth、专属透明代理、本机端口隔离、Retain/Recall/Reflect 验收、备份恢复和灾备时间点回滚。
+当前仓库已经覆盖：Ubuntu/Swap 初始化、Docker、Docker 出站、Hindsight 部署与持久化、Codex OAuth 本地凭据、Hindsight 专属透明代理、本机端口隔离、Retain/Recall/Reflect 验收、备份恢复和灾备时间点回滚。
 
 ## 快速开始
 
@@ -88,7 +135,7 @@ curl -fsSL https://gitee.com/skyhigh13/memory-server-infra/raw/main/bootstrap.sh
 curl -fsSL https://raw.githubusercontent.com/skyhigh13gdhz-png/memory-server-infra/main/bootstrap.sh | sudo bash
 ```
 
-两个入口运行的是同一套安装逻辑。bootstrap 启动后会：
+两个入口运行同一套安装逻辑。bootstrap 会：
 
 ```text
 检查基础工具
@@ -97,18 +144,18 @@ curl -fsSL https://raw.githubusercontent.com/skyhigh13gdhz-png/memory-server-inf
     ↓
 选择可用代码源
     ↓
-检查现有 Xray 海外网络
+检查服务器是否已有 Xray 海外网络
     ↓
-没有 Xray时询问用户是否需要配置
+没有时询问是否需要配置
     ↓
-如选择配置，从 Gitee 获取 ubuntu-vps-proxy-kit 安装器
+如选择配置，调用 ubuntu-vps-proxy-kit
     ↓
 获取 memory-server-infra
     ↓
-进入正式 setup
+Docker / Hindsight / 安全 / 备份相关正式部署
 ```
 
-如果已经 clone 仓库：
+已经 clone 当前仓库时：
 
 ```bash
 cd /opt/src/memory-server-infra
@@ -126,13 +173,13 @@ sudo bash setup.sh
 sudo bash scripts/health-check.sh
 ```
 
-需要排障时：
+排障详细模式：
 
 ```bash
 sudo bash scripts/health-check.sh --verbose
 ```
 
-真实记忆功能验收：
+真实 Hindsight 记忆功能验收：
 
 ```bash
 sudo bash scripts/07-hindsight-smoke-test.sh
@@ -163,9 +210,9 @@ sudo bash scripts/08-backup-restore-test.sh
 
 `05-backup.sh` 保存的是 Hindsight 底层数据卷快照，用于灾难恢复，不是给人阅读的记忆导出文件。
 
-默认目录：`/opt/memory-server/backups/`。
+默认目录：`/opt/memory-server/backups/`。每个恢复点包含 `.tar.gz` 数据和 `.sha256` 完整性校验。
 
-每个恢复点包含 `.tar.gz` 数据和 `.sha256` 完整性校验。长期会把灾备快照和可读/可迁移 Raw Store 分开；Raw Store 才是长期个人数据的 source of truth。
+长期会把灾备快照和可读/可迁移 Raw Store 分开。Raw Store 属于完整记忆系统的数据层，不应与本仓库当前的 Hindsight 灾备快照混为一谈。
 
 ## 网络与安全设计
 
@@ -182,7 +229,7 @@ Hindsight 需要海外网络的 TCP 出站由专属透明代理进入 Xray；国
 OpenAI / Codex 等：按需要经 Xray
 ```
 
-因此即使从 Gitee 成功安装代码，也仍需验证容器镜像和实际 AI Provider 的网络。
+因此即使从 Gitee 成功获取本仓库，也仍需验证容器镜像和实际 AI Provider 网络。
 
 ## Codex OAuth 凭据
 
@@ -206,20 +253,18 @@ Hindsight 使用 `openai-codex` Provider 时无需把 OpenAI API Key 写入 `.en
 
 仍需长期观察：Codex OAuth 实际 token 刷新周期、长期真实记忆负载 RAM/Swap、embedding/reranking 峰值、数据增长后的备份体积和恢复耗时。
 
-> 新增的 GitHub/Gitee 双源 bootstrap 和安装前海外网络引导尚需在测试服务器/干净服务器上完成真实回归后，才能标记为“已验证”。
+> 新增的 GitHub/Gitee 双源 bootstrap 和安装前海外网络引导尚需真实回归后，才能标记为“已验证”。
 
 ## 下一阶段路线
 
+这里记录的是**与本仓库直接相关的后续工作**。Memory Gateway 本身会作为独立组件建设，而不是塞进 `memory-server-infra`。
+
 ```text
-1. 完成 setup / health-check / backup / restore 等“小白模式”输出
+1. 完成 setup / health-check / backup / restore 的“小白模式”输出
 2. 回归 GitHub/Gitee 双源 bootstrap + 可选 Xray 安装
-3. 建立 Memory Gateway 最小可用版本
-4. Gateway 实现统一 retain / recall / reflect
-5. 加入客户端身份、认证和 bank 策略
-6. 打通 ChatGPT → Gateway → Hindsight
-7. 在旧测试服务器完成端到端测试
-8. 再到新的干净服务器执行从零正式部署验收
-9. 逐步接入 Qwen / WorkBuddy / Claude / Hermes / Codex
+3. 为 Memory Gateway 准备稳定的本机 Hindsight 接口边界
+4. 在旧测试服务器配合 Gateway 完成端到端验收
+5. 再到新的干净服务器执行从零正式部署验收
 ```
 
-新服务器承担的是成熟链路的正式环境迁移与从零验收，而不是继续承担架构探索。
+完整系统下一阶段则是：Memory Gateway MVP → retain/recall/reflect → 身份认证与 bank 策略 → ChatGPT 接入 → 其他 AI 客户端。
