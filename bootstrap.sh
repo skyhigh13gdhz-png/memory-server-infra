@@ -17,6 +17,7 @@ die(){ printf '[✗] %s\n' "$*" >&2; exit 1; }
 
 can_https(){ curl -fsSI --connect-timeout 4 --max-time 8 "$1" >/dev/null 2>&1; }
 has_xray(){ systemctl is-active --quiet xray 2>/dev/null && ss -lnt 2>/dev/null | grep -qE '127\.0\.0\.1:10809\b'; }
+has_tty(){ [[ -r /dev/tty && -w /dev/tty ]]; }
 
 install_base_tools(){
   if command -v git >/dev/null 2>&1 && command -v curl >/dev/null 2>&1; then return; fi
@@ -63,9 +64,8 @@ prepare_overseas_network(){
 如果你只使用国内 AI，或者已经有自己的网络方案，可以暂时跳过。
 EOF
 
-  if [[ ! -t 0 ]]; then
-    warn '当前不是交互式终端，跳过海外网络配置；正式 setup 会继续检查所需能力'
-    return
+  if ! has_tty; then
+    die '当前没有可用的控制终端，无法安全读取网络配置。请在 SSH/终端中交互运行 bootstrap.sh。'
   fi
 
   local choice
@@ -74,7 +74,7 @@ EOF
     printf '  1. 配置（使用 ubuntu-vps-proxy-kit）\n'
     printf '  2. 暂时不配置，我只使用国内 AI\n'
     printf '  3. 暂时不配置，我已有其他网络方案\n'
-    read -r -p '请选择 [1/2/3]：' choice
+    read -r -p '请选择 [1/2/3]：' choice </dev/tty
     case "$choice" in
       1)
         can_https 'https://gitee.com' || die '当前无法访问 Gitee，无法获取国内镜像中的网络安装器。'
@@ -82,7 +82,7 @@ EOF
         info '正在从 Gitee 国内镜像获取海外网络安装器……'
         curl -fsSL "$GITEE_PROXY_SCRIPT" -o "$tmp"
         chmod 700 "$tmp"
-        bash "$tmp"
+        bash "$tmp" </dev/tty
         rm -f "$tmp"
         has_xray || die '海外网络安装脚本已结束，但没有检测到预期的 Xray HTTP 代理，请先检查后再继续。'
         ok '海外网络通道已经准备完成'
