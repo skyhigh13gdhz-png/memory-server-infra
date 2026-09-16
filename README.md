@@ -4,7 +4,7 @@
 
 目标不是把记忆绑定到某个 AI 客户端，而是在服务器上建立独立、可迁移的记忆基础层：当前以 Hindsight 为记忆引擎，后续由 Memory Gateway 向 ChatGPT、Qwen、WorkBuddy、Claude、Hermes、Codex 等不同客户端提供统一入口。
 
-> 本仓库是公开的部署代码仓库。真实个人记忆、OAuth 凭据、API Key、代理节点信息和备份数据均不进入 Git。
+> 本仓库是公开部署代码。真实个人记忆、OAuth 凭据、API Key、代理节点信息和备份数据均不进入 Git。
 
 ## 最终目标
 
@@ -18,50 +18,97 @@ ChatGPT / Qwen / WorkBuddy / Claude / Hermes / Codex / future AI
                 Raw Store / PostgreSQL / object storage
 ```
 
-Memory Gateway 是稳定边界；Hindsight 是当前记忆引擎。客户端不直接绑定 Hindsight，因此以后可以替换或组合其他记忆引擎，而不需要重做所有客户端。
+Memory Gateway 是稳定边界；Hindsight 是当前记忆引擎。客户端不直接绑定 Hindsight。
 
-当前 `memory-server-infra` 主要负责图中 Hindsight 及其服务器基础设施。Memory Gateway 与客户端接入属于下一阶段。
+## 代码仓与镜像规则
+
+**GitHub 是唯一可写主仓 / Source of Truth；Gitee 是只读的中国大陆部署镜像。**
+
+代码修改、版本演进和提交只发生在 GitHub。Gitee 仓库只从 GitHub 单向同步，不在 Gitee 单独修改代码，避免双仓分叉。
+
+### memory-server-infra
+
+GitHub 主仓：
+
+https://github.com/skyhigh13gdhz-png/memory-server-infra
+
+Gitee 大陆镜像：
+
+https://gitee.com/skyhigh13/memory-server-infra
+
+### ubuntu-vps-proxy-kit
+
+GitHub 主仓：
+
+https://github.com/skyhigh13gdhz-png/ubuntu-vps-proxy-kit/tree/mainland_vps_use_proxy
+
+Gitee 大陆镜像：
+
+https://gitee.com/skyhigh13/ubuntu-vps-proxy-kit/tree/mainland_vps_use_proxy
+
+约定：
+
+```text
+开发 / Codex / ChatGPT 修改
+            ↓
+       GitHub 主仓
+            ↓
+        单向同步
+            ↓
+       Gitee 镜像
+            ↓
+     中国大陆 VPS
+```
+
+中国大陆 VPS 可以优先从 Gitee 获取安装代码；海外 VPS 可以直接使用 GitHub。新的 `bootstrap.sh` 会检测 GitHub/Gitee 可达性并选择可用代码源。
+
+> Gitee 解决的是“安装代码从哪里下载”，不能代替运行时海外网络。GHCR、OpenAI、Codex 等仍可能需要 Xray 或其他合适的海外网络方案。
 
 ## 当前已经做到什么
 
-用非技术语言概括：目前已经证明“一台普通 Ubuntu 服务器可以稳定运行 Hindsight，而且服务器重启、重复安装和数据库恢复之后，记忆服务仍能恢复正常”。
+目前已经证明：普通 Ubuntu 服务器可以稳定运行 Hindsight，而且服务器重启、重复安装和数据库恢复之后，记忆服务仍能恢复正常。
 
-已经实现：
-
-- Ubuntu 环境检查和低内存机器 Swap 自动配置
-- Docker Engine / Docker Compose 自动安装
-- Docker 经本机 Xray 拉取境外镜像
-- Hindsight 自动部署和数据持久化
-- ChatGPT / Codex OAuth 登录及独立可刷新凭据目录
-- Hindsight 专属透明代理
-- Hindsight API/UI 默认不向公网开放
-- 网络规则重启后自动恢复
-- Retain / Recall / Reflect 真实功能测试
-- Hindsight 数据备份、完整性校验和恢复
-- 灾备时间点回滚自动验收
-- Public GitHub 引导安装
+已经实现：Ubuntu/Swap 初始化、Docker、Xray 出站、Hindsight 部署与持久化、Codex OAuth、专属透明代理、本机端口隔离、Retain/Recall/Reflect 验收、备份恢复和灾备时间点回滚。
 
 ## 快速开始
 
-> 当前建议先在测试环境使用。完整的 GPT → Memory Gateway → Memory Server 链路完成后，再进行正式新服务器的全新部署验收。
+> 当前建议先在测试环境使用。完整 GPT → Memory Gateway → Memory Server 链路完成后，再进行正式新服务器全新部署验收。
 
-### Public 仓库引导安装
+### 中国大陆 VPS：Gitee 入口
 
-在已经配置并运行 Xray 的 Ubuntu 服务器上：
+如果服务器访问 GitHub 不稳定，推荐从 Gitee 获取第一份 bootstrap：
+
+```bash
+curl -fsSL https://gitee.com/skyhigh13/memory-server-infra/raw/main/bootstrap.sh | sudo bash
+```
+
+### 海外 VPS：GitHub 入口
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/skyhigh13gdhz-png/memory-server-infra/main/bootstrap.sh | sudo bash
 ```
 
-它会自动拉取本仓库到：
+两个入口运行的是同一套安装逻辑。bootstrap 启动后会：
 
 ```text
-/opt/src/memory-server-infra
+检查基础工具
+    ↓
+检测 GitHub / Gitee
+    ↓
+选择可用代码源
+    ↓
+检查现有 Xray 海外网络
+    ↓
+没有 Xray时询问用户是否需要配置
+    ↓
+如选择配置，从 Gitee 获取 ubuntu-vps-proxy-kit 安装器
+    ↓
+获取 memory-server-infra
+    ↓
+进入正式 setup
 ```
 
-然后执行正式安装流程。不需要 GitHub Deploy Key、SSH alias 或私人仓库访问凭据。
-
-### 已经 clone 仓库
+如果已经 clone 仓库：
 
 ```bash
 cd /opt/src/memory-server-infra
@@ -69,27 +116,23 @@ git pull --ff-only
 sudo bash setup.sh
 ```
 
-当前部署流程共 8 个阶段：
+源码默认位于 `/opt/src/memory-server-infra`，运行数据位于 `/opt/memory-server-infra`，两者分离。
 
-```text
-服务器检查
-  ↓
-内存 / Swap
-  ↓
-Docker
-  ↓
-Docker 网络
-  ↓
-Hindsight 本机安全隔离
-  ↓
-Hindsight 部署
-  ↓
-Hindsight 专属透明代理
-  ↓
-整体健康检查
+## 安装后的检查
+
+普通健康检查：
+
+```bash
+sudo bash scripts/health-check.sh
 ```
 
-安装完成后可以运行真实记忆功能测试：
+需要排障时：
+
+```bash
+sudo bash scripts/health-check.sh --verbose
+```
+
+真实记忆功能验收：
 
 ```bash
 sudo bash scripts/07-hindsight-smoke-test.sh
@@ -101,32 +144,13 @@ sudo bash scripts/07-hindsight-smoke-test.sh
 sudo bash scripts/08-backup-restore-test.sh
 ```
 
-该测试会真实执行：写入备份前数据 → 创建恢复点 → 写入备份后数据 → 恢复 → 验证备份前数据仍存在 → 验证备份后数据已回滚。
+灾备测试真实执行：写入备份前数据 → 创建恢复点 → 写入备份后数据 → 恢复 → 验证备份前数据存在 → 验证备份后数据已回滚。
 
 ## 给非技术用户看的输出原则
 
-这个仓库不仅要“脚本能跑”，还要让没有 Linux / Docker 背景的人知道当前发生了什么。
+主要入口默认优先回答：现在在做什么、成功还是失败、失败后下一步做什么。Docker volume、iptables、UID、systemd、HTTP 状态码等技术信息保留给 `--verbose` 或排障场景。
 
-后续所有主要入口脚本统一采用两层输出：
-
-```text
-========== Hindsight 网络检查 ==========
-[✓] 记忆服务访问海外 AI 的网络：正常
-[✓] Hindsight 本机安全隔离：正常
-[✓] 重启后自动恢复：已启用
-
-当前状态：正常，可以继续使用记忆服务。
-```
-
-默认输出优先回答三个问题：
-
-1. **现在在做什么？**
-2. **成功还是失败？**
-3. **失败后用户下一步应该做什么？**
-
-Docker volume、iptables chain、UID、systemd unit、HTTP 状态码等技术信息不删除，但默认降级为辅助信息；需要排障时再通过详细模式查看。
-
-统一状态符号：
+统一状态：
 
 ```text
 [✓] 正常 / 已完成
@@ -135,66 +159,40 @@ Docker volume、iptables chain、UID、systemd unit、HTTP 状态码等技术信
 [→] 当前正在执行
 ```
 
-## 源码、运行数据和个人记忆分离
-
-推荐目录：
-
-```text
-/opt/
-├── src/
-│   └── memory-server-infra/      # Git 源码，可重新下载
-└── memory-server-infra/          # 部署后的运行配置
-    └── hindsight/
-```
-
-Hindsight 的 Docker volume、OAuth 凭据和备份独立保存。删除 Git 源码不应删除真实记忆数据。
-
-长期架构还会增加 Raw Store：原始记录由可读、可迁移的数据层保存；Hindsight 负责事实抽取、语义检索和 Reflection。这样未来即使替换 Hindsight，个人原始记忆仍然存在并可以重新导入。
-
 ## 备份是什么
 
-当前 `05-backup.sh` 保存的是 Hindsight 底层数据卷快照，用途是**灾难恢复**，不是给人阅读的记忆导出文件。
+`05-backup.sh` 保存的是 Hindsight 底层数据卷快照，用于灾难恢复，不是给人阅读的记忆导出文件。
 
-备份默认位于：
+默认目录：`/opt/memory-server/backups/`。
 
-```text
-/opt/memory-server/backups/
-```
-
-每个恢复点包含：
-
-```text
-hindsight-YYYYMMDD-HHMMSS.tar.gz
-hindsight-YYYYMMDD-HHMMSS.tar.gz.sha256
-```
-
-`.tar.gz` 是完整恢复数据，`.sha256` 用于检查备份有没有损坏。
-
-后续会把“灾难恢复备份”和“人可以阅读/迁移的记忆导出”分成两套能力；Raw Store 才是长期个人数据的 source of truth。
+每个恢复点包含 `.tar.gz` 数据和 `.sha256` 完整性校验。长期会把灾备快照和可读/可迁移 Raw Store 分开；Raw Store 才是长期个人数据的 source of truth。
 
 ## 网络与安全设计
 
-Hindsight 当前使用 Docker host network，以便访问宿主机 loopback 上的 Xray。Hindsight 自身可能显示监听 `0.0.0.0:8888` / `0.0.0.0:9999`，因此由主机防火墙阻断所有非 loopback IPv4/IPv6 访问，并通过 systemd 在重启后恢复。
+Hindsight 使用 Docker host network 访问宿主机 loopback Xray。主机防火墙阻断非 loopback 对 8888/9999 的访问，并通过 systemd 在重启后恢复。
 
-Codex Provider 的 HTTP 客户端不能依赖普通 shell 代理环境，因此 Hindsight 的相关 TCP 出站由专属透明代理送入本机 Xray；国内/海外的最终分流继续由 Xray routing 决定。
+Hindsight 需要海外网络的 TCP 出站由专属透明代理进入 Xray；国内/海外最终分流继续由 Xray routing 决定。当前按 Hindsight 运行 UID 匹配，未来可升级为 cgroup/network namespace 隔离。
 
-当前透明代理按 Hindsight 运行 UID 匹配。如果宿主机普通用户恰好使用同一 UID，其主动发起的 TCP 也可能命中规则。它不影响入站 SSH；未来可以升级到 cgroup/network namespace 级隔离。
+### 安装网络和运行网络是两件事
+
+```text
+安装代码：GitHub / Gitee
+容器镜像：Docker Registry / GHCR
+国内 AI：DIRECT
+OpenAI / Codex 等：按需要经 Xray
+```
+
+因此即使从 Gitee 成功安装代码，也仍需验证容器镜像和实际 AI Provider 的网络。
 
 ## Codex OAuth 凭据
 
-Hindsight 使用 `openai-codex` Provider 时无需把 OpenAI API Key 写入 `.env`。部署脚本会检测容器实际 UID/GID，在服务器本地准备独立 Codex 目录，并以可写方式挂载，使 Hindsight 能持久化 OAuth token 刷新状态。
+Hindsight 使用 `openai-codex` Provider 时无需把 OpenAI API Key 写入 `.env`。部署脚本在服务器本地准备独立、可写的 Codex 凭据目录，使 OAuth token 刷新状态可以持久化。
 
-默认路径：
-
-```text
-/var/lib/hindsight/codex/auth.json
-```
-
-该文件永远不进入 Git。
+默认路径：`/var/lib/hindsight/codex/auth.json`。该文件永远不进入 Git。
 
 ## Public 仓库安全边界
 
-允许提交：脚本、Compose 模板、`.env.example`、文档、无敏感信息的测试逻辑。
+允许提交：脚本、Compose 模板、`.env.example`、文档、无敏感信息测试逻辑。
 
 禁止提交：真实 `.env`、`auth.json`、API Key、OAuth token、代理凭据、SSH 私钥、真实记忆数据、数据库 dump 和备份文件。
 
@@ -204,56 +202,24 @@ Hindsight 使用 `openai-codex` Provider 时无需把 OpenAI API Key 写入 `.en
 
 测试环境：Ubuntu 24.04 / amd64 / 约 2GB RAM + Swap / Docker 29.8.0 / Compose v5.5.1。
 
-### 已真实验证通过
+已真实验证通过：Docker 安装与 Xray 出站、Hindsight 启动和隔离、ChatGPT/Codex Device OAuth、GPT-5.6 Luna、透明代理、Retain → Recall → Reflect、container restart、整机 reboot、reboot 后功能恢复、setup 幂等、备份 SHA256，以及 backup → mutate → restore → point-in-time rollback 完整闭环。
 
-- Docker 自动安装、镜像拉取和 Xray 出站
-- Hindsight 启动与本机端口隔离
-- ChatGPT / Codex Device OAuth
-- GPT-5.6 Luna
-- Hindsight 专属透明代理
-- Retain → Recall → Reflect
-- Docker container restart 后功能恢复
-- 整机 reboot 后 Xray、Docker、透明代理和 Hindsight 自动恢复
-- reboot 后 Retain / Recall / Reflect 功能链路恢复
-- 完整 `setup.sh` 重复执行，最终健康检查无 WARN / FAIL
-- 备份文件和 SHA256 生成
-- backup → 写入新数据 → restore → 数据时间点回滚完整闭环
-- Public 前完整 Git 历史 Gitleaks 扫描无泄漏
+仍需长期观察：Codex OAuth 实际 token 刷新周期、长期真实记忆负载 RAM/Swap、embedding/reranking 峰值、数据增长后的备份体积和恢复耗时。
 
-灾备闭环中已经真实验证：备份前数据恢复后仍存在，备份后才写入的数据恢复后消失。因此当前备份不是仅验证“压缩包能生成”，而是已经完成实际 point-in-time rollback 验收。
-
-### 仍需长期观察
-
-- Codex OAuth token 经实际过期/刷新周期后的长期稳定性
-- 长时间真实记忆负载下的 RAM / Swap 使用
-- embedding / reranking 峰值资源
-- 长期数据增长后的备份体积和恢复耗时
-
-低配置测试机跑通不代表约 2GB RAM 适合长期生产负载。
+> 新增的 GitHub/Gitee 双源 bootstrap 和安装前海外网络引导尚需在测试服务器/干净服务器上完成真实回归后，才能标记为“已验证”。
 
 ## 下一阶段路线
 
-当前服务器基础记忆层已经完成第一轮可靠性验收。下一阶段优先级不是立刻迁移正式服务器，而是先把完整产品链路打通：
-
 ```text
-ChatGPT
-   ↓
-Memory Gateway
-   ↓
-Hindsight / Memory Server
+1. 完成 setup / health-check / backup / restore 等“小白模式”输出
+2. 回归 GitHub/Gitee 双源 bootstrap + 可选 Xray 安装
+3. 建立 Memory Gateway 最小可用版本
+4. Gateway 实现统一 retain / recall / reflect
+5. 加入客户端身份、认证和 bank 策略
+6. 打通 ChatGPT → Gateway → Hindsight
+7. 在旧测试服务器完成端到端测试
+8. 再到新的干净服务器执行从零正式部署验收
+9. 逐步接入 Qwen / WorkBuddy / Claude / Hermes / Codex
 ```
 
-具体顺序：
-
-```text
-1. 优化 setup / health-check / backup / restore 等脚本的“小白模式”输出
-2. 建立 Memory Gateway 最小可用版本
-3. Gateway 实现统一 retain / recall / reflect
-4. 加入客户端身份、认证和 bank 策略
-5. 先接通 ChatGPT → Gateway → Hindsight
-6. 在旧测试服务器完成真实端到端记忆测试
-7. 再用 Public bootstrap 在新的干净服务器进行从零部署验收
-8. 最后逐步接入 Qwen / WorkBuddy / Claude / Hermes / Codex 等其他客户端
-```
-
-这样新服务器承担的是已经打通后的“正式环境迁移 + 全新机器验收”，而不是继续承担架构探索和脚本调试。
+新服务器承担的是成熟链路的正式环境迁移与从零验收，而不是继续承担架构探索。
