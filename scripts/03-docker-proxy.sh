@@ -53,7 +53,7 @@ sleep 2
 systemctl is-active --quiet docker || die "写入代理后 Docker 重启失败。"
 
 log "Docker daemon 代理环境："
-systemctl show --property=Environment docker
+SYSTEMD_PAGER=cat systemctl --no-pager show --property=Environment docker
 
 log "执行轻量镜像拉取验证。"
 docker pull alpine:latest >/dev/null || die "Docker 通过当前出站配置拉取 alpine 失败。"

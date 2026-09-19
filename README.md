@@ -161,6 +161,8 @@ curl -fsSL https://raw.githubusercontent.com/skyhigh13gdhz-png/memory-server-inf
 
 两个入口运行同一套 bootstrap 安装逻辑。
 
+部署脚本中的 `systemctl` 状态输出已显式禁用分页器，因此通过 SSH 终端或 `curl | sudo bash` 运行时不会停在 `less` 等待界面。
+
 ### 已经 clone 过仓库
 
 仍然运行统一入口，不需要手工 `git pull`，也不要改成直接执行 `setup.sh`：
