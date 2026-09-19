@@ -24,7 +24,27 @@ local choice provider model api_key; while true; do read -r -p "请输入 [1/2]:
 if [[ "$PROVIDER" == openai-codex ]]; then CURRENT_MODEL="$(get_env HINDSIGHT_API_LLM_MODEL)"; case "$CURRENT_MODEL" in ""|gpt-5.4-mini|gpt-5.6-terra) write_env_value HINDSIGHT_API_LLM_MODEL "$CODEX_DEFAULT_MODEL"; log "Codex 默认模型已迁移为 ${CODEX_DEFAULT_MODEL}（原配置 ${CURRENT_MODEL:-为空}）。";; *) log "保留用户显式配置的 Codex 模型：${CURRENT_MODEL}";; esac; fi
 find_user_command(){ local name="$1" path="" sudo_user="${SUDO_USER:-}"; path="$(command -v "$name" 2>/dev/null || true)"; [[ -n "$path" ]] && { printf '%s\n' "$path"; return; }; if [[ -n "$sudo_user" && "$sudo_user" != root ]]; then path="$(sudo -Hiu "$sudo_user" bash -lc "command -v $name" 2>/dev/null | tail -n1 || true)"; [[ -n "$path" && -x "$path" ]] && { printf '%s\n' "$path"; return; }; fi; return 1; }
 run_node_cli(){ local bin="$1"; shift; env PATH="$(dirname "$bin"):${PATH}" "$bin" "$@"; }
-install_codex_cli(){ local codex_bin npm_bin npm_dir install_path; codex_bin="$(find_user_command codex || true)"; [[ -z "$codex_bin" ]] || { log "Codex CLI 已安装：$(run_node_cli "$codex_bin" --version)"; return; }; npm_bin="$(find_user_command npm || true)"; [[ -n "$npm_bin" ]] || die "未检测到 npm。"; if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != root && "$npm_bin" == /home/* ]]; then npm_dir="$(dirname "$npm_bin")"; install_path="PATH=${npm_dir}:\$PATH"; sudo -Hiu "$SUDO_USER" bash -lc "$install_path '$npm_bin' install -g @openai/codex" || sudo -Hiu "$SUDO_USER" bash -lc "HTTP_PROXY=$XRAY_HTTP_PROXY HTTPS_PROXY=$XRAY_HTTP_PROXY $install_path '$npm_bin' install -g @openai/codex" || die "Codex CLI 安装失败。"; else run_node_cli "$npm_bin" install -g @openai/codex || HTTP_PROXY="$XRAY_HTTP_PROXY" HTTPS_PROXY="$XRAY_HTTP_PROXY" run_node_cli "$npm_bin" install -g @openai/codex || die "Codex CLI 安装失败。"; fi; }
+install_codex_cli(){
+  local codex_bin installer
+  codex_bin="$(find_user_command codex || true)"
+  [[ -z "$codex_bin" ]] || { log "Codex CLI 已安装：$(run_node_cli "$codex_bin" --version)"; return; }
+
+  command -v curl >/dev/null 2>&1 || die "安装 Codex CLI 需要 curl。"
+  installer="$(mktemp)"
+  if ! curl -fsSL --connect-timeout 10 --max-time 60 https://chatgpt.com/codex/install.sh -o "$installer"; then
+    warn "Codex 官方安装器直连下载失败，改用本机 Xray。"
+    curl -fsSL --connect-timeout 10 --max-time 60 --proxy "$XRAY_HTTP_PROXY" https://chatgpt.com/codex/install.sh -o "$installer" || { rm -f "$installer"; die "Codex 官方安装器下载失败。"; }
+  fi
+  chmod 0700 "$installer"
+  if ! CODEX_INSTALL_DIR=/usr/local/bin CODEX_HOME="$CODEX_AUTH_DIR_DEFAULT" CODEX_NON_INTERACTIVE=1 sh "$installer"; then
+    rm -f "$installer"
+    die "Codex CLI 安装失败。"
+  fi
+  rm -f "$installer"
+  codex_bin="$(find_user_command codex || true)"
+  [[ -n "$codex_bin" ]] || die "Codex 官方安装器已结束，但无法定位 codex。"
+  log "Codex CLI 已通过官方独立安装器安装：$(run_node_cli "$codex_bin" --version)"
+}
 run_codex_oauth(){ local codex_bin="$1" auth_dir="$2"; echo "========== ChatGPT / Codex 一次性授权 =========="; HTTP_PROXY="$XRAY_HTTP_PROXY" HTTPS_PROXY="$XRAY_HTTP_PROXY" ALL_PROXY="$XRAY_SOCKS_PROXY" CODEX_HOME="$auth_dir" PATH="$(dirname "$codex_bin"):${PATH}" "$codex_bin" login --device-auth || die "Codex OAuth 授权未成功完成。"; [[ -s "$auth_dir/auth.json" ]] || die "授权后未找到 auth.json。"; chmod 600 "$auth_dir/auth.json"; }
 prepare_hindsight_codex_auth(){ local source_auth="$1" image_tag="$2" runtime_id runtime_uid runtime_gid target_auth; runtime_id="$(docker run --rm --entrypoint sh "ghcr.io/vectorize-io/hindsight:${image_tag}" -c 'id -u; id -g')" || die "无法读取 Hindsight 镜像运行 UID/GID。"; runtime_uid="$(printf '%s\n' "$runtime_id" | sed -n '1p')"; runtime_gid="$(printf '%s\n' "$runtime_id" | sed -n '2p')"; [[ "$runtime_uid" =~ ^[0-9]+$ && "$runtime_gid" =~ ^[0-9]+$ ]] || die "Hindsight UID/GID 检测异常：${runtime_id}"; install -d -m 0700 -o "$runtime_uid" -g "$runtime_gid" "$HINDSIGHT_SECRET_DIR"; target_auth="$HINDSIGHT_SECRET_DIR/auth.json"; if [[ "$source_auth" != "$target_auth" && ! -s "$target_auth" ]]; then install -m 0600 -o "$runtime_uid" -g "$runtime_gid" "$source_auth" "$target_auth"; fi; [[ -s "$target_auth" ]] || die "Hindsight 独立 Codex auth.json 准备失败。"; chown "$runtime_uid:$runtime_gid" "$target_auth"; chmod 0600 "$target_auth"; write_env_value HINDSIGHT_CODEX_AUTH_DIR "$HINDSIGHT_SECRET_DIR"; log "已为 Hindsight 准备独立可写 Codex 凭据目录（UID:GID=${runtime_uid}:${runtime_gid}，目录 0700 / auth.json 0600）。"; }
 if [[ "$PROVIDER" == openai-codex ]]; then install_codex_cli; CODEX_AUTH_DIR="$(get_env CODEX_HOME)"; CODEX_AUTH_DIR="${CODEX_AUTH_DIR:-$CODEX_AUTH_DIR_DEFAULT}"; mkdir -p "$CODEX_AUTH_DIR"; chmod 700 "$CODEX_AUTH_DIR"; CODEX_BIN="$(find_user_command codex || true)"; [[ -n "$CODEX_BIN" ]] || die "无法定位 Codex CLI。"; [[ -s "$CODEX_AUTH_DIR/auth.json" ]] || run_codex_oauth "$CODEX_BIN" "$CODEX_AUTH_DIR"; log "已检测到独立 Codex OAuth 凭据。"; else [[ -n "$API_KEY" ]] || die "当前 Provider=${PROVIDER} 需要 API Key。"; fi

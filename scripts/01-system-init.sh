@@ -59,7 +59,9 @@ preflight(){
 ensure_swap(){
   if (( TARGET_SWAP_MB == 0 )); then (( SWAP_MB > 0 )) && log "物理内存充足；已有 ${SWAP_MB} MB Swap，保留不删除。" || log "物理内存充足且无 Swap，本次不创建。"; return 0; fi
   if (( SWAP_MB >= TARGET_SWAP_MB )); then log "当前总 Swap ${SWAP_MB} MB 已达到策略目标 ${TARGET_SWAP_MB} MB，不做修改。"; return 0; fi
-  local need_mb=$((TARGET_SWAP_MB-SWAP_MB)) required_mb=$((need_mb+DISK_RESERVE_MB))
+  local need_mb required_mb
+  need_mb=$((TARGET_SWAP_MB-SWAP_MB))
+  required_mb=$((need_mb+DISK_RESERVE_MB))
   if [[ -e "$SWAP_FILE" ]]; then
     if ! swapon --show=NAME --noheadings 2>/dev/null | grep -Fxq "$SWAP_FILE"; then chmod 600 "$SWAP_FILE"; swapon "$SWAP_FILE" || die "已有 Swap 文件启用失败。"; fi
     SWAP_MB="$(mb_from_kb "$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)")"
