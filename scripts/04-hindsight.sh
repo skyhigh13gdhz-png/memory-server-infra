@@ -36,7 +36,8 @@ install_codex_cli(){
     curl -fsSL --connect-timeout 10 --max-time 60 --proxy "$XRAY_HTTP_PROXY" https://chatgpt.com/codex/install.sh -o "$installer" || { rm -f "$installer"; die "Codex 官方安装器下载失败。"; }
   fi
   chmod 0700 "$installer"
-  if ! CODEX_INSTALL_DIR=/usr/local/bin CODEX_HOME="$CODEX_AUTH_DIR_DEFAULT" CODEX_NON_INTERACTIVE=1 sh "$installer"; then
+  if ! HTTP_PROXY="$XRAY_HTTP_PROXY" HTTPS_PROXY="$XRAY_HTTP_PROXY" ALL_PROXY="$XRAY_SOCKS_PROXY" \
+    CODEX_INSTALL_DIR=/usr/local/bin CODEX_HOME="$CODEX_AUTH_DIR_DEFAULT" CODEX_NON_INTERACTIVE=1 sh "$installer"; then
     rm -f "$installer"
     die "Codex CLI 安装失败。"
   fi

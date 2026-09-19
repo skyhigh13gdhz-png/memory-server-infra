@@ -231,7 +231,7 @@ OpenAI / Codex 等：按需要经 Xray
 
 Hindsight 使用 `openai-codex` Provider 时无需把 OpenAI API Key 写入 `.env`。部署脚本在服务器本地准备独立、可写的 Codex 凭据目录，使 OAuth token 刷新状态可以持久化。
 
-如果服务器还没有 Codex CLI，部署脚本会使用 OpenAI 官方独立安装器安装到 `/usr/local/bin`；直连失败时自动改用本机 Xray。该路径不依赖服务器预装 Node.js/npm。
+如果服务器还没有 Codex CLI，部署脚本会使用 OpenAI 官方独立安装器安装到 `/usr/local/bin`；安装器及其后续 release 下载在直连不可用时会继承本机 Xray。该路径不依赖服务器预装 Node.js/npm。
 
 默认路径：`/var/lib/hindsight/codex/auth.json`。该文件永远不进入 Git。
 
