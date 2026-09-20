@@ -140,7 +140,7 @@ sudo bash scripts/09-configure-llm-routing.sh zai-operation reflect glm-4.5-air
 sudo bash scripts/09-configure-llm-routing.sh inherit-operation reflect
 ```
 
-`Recall` 本身不调用 LLM，Embedding 保持本地配置。每次切换会重建 Hindsight，并自动重绑基于容器 cgroup 的专属透明代理，随后执行 Retain/Recall/Reflect 验收。
+同一台服务器上已存在可用的智谱操作配置时，新操作会在 root-only 配置文件内部复用该 Key，不回显、不进入命令历史；没有可复用 Key 时才隐藏提示输入。`Recall` 本身不调用 LLM，Embedding 保持本地配置。每次切换会重建 Hindsight，并自动重绑基于容器 cgroup 的专属透明代理，随后执行 Retain/Recall/Reflect 验收。
 
 脚本会隐藏输入 API Key、写入服务器本地 `0600` 配置、重建 Hindsight 并执行 Retain/Recall/Reflect 验收。首轮 A/B 不启用自动 failover，避免智谱失败后静默切到 Codex 而污染质量结论。查看当前路由或一键回滚：
 

@@ -80,9 +80,19 @@ case "${1:-status}" in
     prefix="$(operation_prefix "$operation")"
     model="${1:-$DEFAULT_ZAI_MODEL}"
     api_key="${ZAI_API_KEY:-}"
+    api_key_source="environment"
+    if [[ -z "$api_key" ]]; then
+      for existing_prefix in RETAIN REFLECT CONSOLIDATION MENTAL_MODEL_REFRESH; do
+        if [[ "$(get_env "HINDSIGHT_API_${existing_prefix}_LLM_PROVIDER" || true)" == zai ]]; then
+          api_key="$(get_env "HINDSIGHT_API_${existing_prefix}_LLM_API_KEY" || true)"
+          if [[ -n "$api_key" ]]; then api_key_source="existing ${existing_prefix,,} route"; break; fi
+        fi
+      done
+    fi
     if [[ -z "$api_key" ]]; then
       read -r -s -p "请输入智谱 z.ai API Key（不会回显）: " api_key
       echo
+      api_key_source="interactive input"
     fi
     [[ -n "$api_key" && -n "$model" ]] || die "API Key 和模型不能为空。"
     write_env_value "HINDSIGHT_API_${prefix}_LLM_PROVIDER" zai
@@ -92,7 +102,7 @@ case "${1:-status}" in
     write_env_value "HINDSIGHT_API_${prefix}_LLM_TIMEOUT" 60
     write_env_value "HINDSIGHT_API_${prefix}_LLM_MAX_RETRIES" 0
     unset api_key ZAI_API_KEY
-    log "已配置 ${operation} → z.ai/${model} (${DEFAULT_ZAI_BASE_URL})；其他未覆盖操作继续继承全局 Provider。"
+    log "已配置 ${operation} → z.ai/${model} (${DEFAULT_ZAI_BASE_URL})；Key 来源=${api_key_source}（内容未输出）；其他未覆盖操作继续继承全局 Provider。"
     restart_and_verify
     show_status
     ;;
