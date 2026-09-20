@@ -139,7 +139,7 @@ sudo bash scripts/09-configure-llm-routing.sh zai-operation reflect glm-4.5-air
 # 删除该操作的独立配置，恢复继承全局 Provider
 sudo bash scripts/09-configure-llm-routing.sh inherit-operation reflect
 
-# 约 2GB RAM 的服务器：限制 LLM 并发并放宽长文处理超时
+# 约 2GB RAM 的服务器：保留前台/后台两个 LLM 槽，并放宽长文处理超时
 sudo bash scripts/09-configure-llm-routing.sh tune-low-memory
 ```
 

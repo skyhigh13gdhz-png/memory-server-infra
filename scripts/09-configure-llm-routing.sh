@@ -135,10 +135,10 @@ case "${1:-status}" in
     show_status
     ;;
   tune-low-memory)
-    write_env_value HINDSIGHT_API_LLM_MAX_CONCURRENT 1
+    write_env_value HINDSIGHT_API_LLM_MAX_CONCURRENT 2
     write_env_value HINDSIGHT_API_RETAIN_LLM_TIMEOUT 180
     write_env_value HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT 180
-    log "已应用低内存稳定性参数：LLM 最大并发=1，Retain/Consolidation timeout=180 秒。"
+    log "已应用低内存稳定性参数：LLM 最大并发=2，Retain/Consolidation timeout=180 秒。"
     restart_and_verify
     show_status
     ;;
