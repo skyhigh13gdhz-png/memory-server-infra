@@ -61,9 +61,18 @@ restart_and_verify(){
     if curl -fsS --max-time 2 http://127.0.0.1:8888/docs >/dev/null 2>&1; then
       [[ -x "$PROXY_SCRIPT" || -f "$PROXY_SCRIPT" ]] || die "找不到透明代理脚本：$PROXY_SCRIPT"
       bash "$PROXY_SCRIPT" install
-      log "Hindsight 已恢复；开始 Retain/Recall/Reflect 功能验收。"
-      bash "$SMOKE_SCRIPT"
-      return
+      log "透明代理已绑定当前容器；重启同一容器，让 Provider 启动验证也走正确出站。"
+      docker restart hindsight >/dev/null
+      for _ in $(seq 1 60); do
+        if curl -fsS --max-time 2 http://127.0.0.1:8888/docs >/dev/null 2>&1; then
+          log "Hindsight 已通过代理恢复；开始 Retain/Recall/Reflect 功能验收。"
+          bash "$SMOKE_SCRIPT"
+          return
+        fi
+        sleep 2
+      done
+      docker compose logs --tail=100 hindsight || true
+      die "透明代理绑定后，Hindsight 未在 120 秒内恢复。"
     fi
     sleep 2
   done
