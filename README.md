@@ -124,6 +124,24 @@ cd /opt/src/memory-server-infra
 sudo bash scripts/09-configure-llm-routing.sh zai-retain glm-4.5-air
 ```
 
+查看所有操作当前实际使用的 Provider、模型、继承关系和 Key 是否已配置（不会显示 Key）：
+
+```bash
+sudo bash scripts/09-configure-llm-routing.sh status
+```
+
+按操作调整路由：
+
+```bash
+# 可选操作：retain / reflect / consolidation / mental-model-refresh
+sudo bash scripts/09-configure-llm-routing.sh zai-operation reflect glm-4.5-air
+
+# 删除该操作的独立配置，恢复继承全局 Provider
+sudo bash scripts/09-configure-llm-routing.sh inherit-operation reflect
+```
+
+`Recall` 本身不调用 LLM，Embedding 保持本地配置。每次切换会重建 Hindsight，并自动重绑基于容器 cgroup 的专属透明代理，随后执行 Retain/Recall/Reflect 验收。
+
 脚本会隐藏输入 API Key、写入服务器本地 `0600` 配置、重建 Hindsight 并执行 Retain/Recall/Reflect 验收。首轮 A/B 不启用自动 failover，避免智谱失败后静默切到 Codex 而污染质量结论。查看当前路由或一键回滚：
 
 默认 endpoint 是中国智谱开放平台 `https://open.bigmodel.cn/api/paas/v4`，对应 BigModel 控制台生成的 API Key。若使用国际 z.ai Coding Plan，可显式设置 `ZAI_RETAIN_BASE_URL=https://api.z.ai/api/coding/paas/v4` 后执行。
