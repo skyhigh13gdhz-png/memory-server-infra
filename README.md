@@ -115,6 +115,24 @@ https://gitee.com/skyhigh13/ubuntu-vps-proxy-kit/tree/mainland_vps_use_proxy
 
 当前仓库已经覆盖：Ubuntu/Swap 初始化、Docker、Docker 出站、Hindsight 部署与持久化、Codex OAuth 本地凭据、Hindsight 专属透明代理、本机端口隔离、Retain/Recall/Reflect 验收、备份恢复和灾备时间点回滚。
 
+### Retain 使用智谱、Reflect 保留 Codex
+
+Hindsight 支持按操作选择 LLM。当前推荐先只把高频事实抽取切到智谱，Embedding 保持本地，复杂 Reflect 继续使用 Codex：
+
+```bash
+cd /opt/src/memory-server-infra
+sudo bash scripts/09-configure-llm-routing.sh zai-retain glm-4.5-air
+```
+
+脚本会隐藏输入 API Key、写入服务器本地 `0600` 配置、重建 Hindsight 并执行 Retain/Recall/Reflect 验收。首轮 A/B 不启用自动 failover，避免智谱失败后静默切到 Codex 而污染质量结论。查看当前路由或一键回滚：
+
+默认 endpoint 是中国智谱开放平台 `https://open.bigmodel.cn/api/paas/v4`，对应 BigModel 控制台生成的 API Key。若使用国际 z.ai Coding Plan，可显式设置 `ZAI_RETAIN_BASE_URL=https://api.z.ai/api/coding/paas/v4` 后执行。
+
+```bash
+sudo bash scripts/09-configure-llm-routing.sh status
+sudo bash scripts/09-configure-llm-routing.sh codex-retain
+```
+
 ## 统一入口：bootstrap.sh
 
 **普通用户只需要记住 `bootstrap.sh`。安装、更新、修复、重复部署都从它进入。**
