@@ -138,6 +138,9 @@ sudo bash scripts/09-configure-llm-routing.sh zai-operation reflect glm-4.5-air
 
 # 删除该操作的独立配置，恢复继承全局 Provider
 sudo bash scripts/09-configure-llm-routing.sh inherit-operation reflect
+
+# 约 2GB RAM 的服务器：限制 LLM 并发并放宽长文处理超时
+sudo bash scripts/09-configure-llm-routing.sh tune-low-memory
 ```
 
 同一台服务器上已存在可用的智谱操作配置时，新操作会在 root-only 配置文件内部复用该 Key，不回显、不进入命令历史；没有可复用 Key 时才隐藏提示输入。`Recall` 本身不调用 LLM，Embedding 保持本地配置。每次切换会重建 Hindsight，自动重绑基于容器 cgroup 的专属透明代理，并在原容器内重启一次以验证 Provider 启动连通性，随后执行 Retain/Recall/Reflect 验收。

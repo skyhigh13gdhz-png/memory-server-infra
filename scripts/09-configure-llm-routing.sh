@@ -52,6 +52,10 @@ show_status(){
   show_operation 'Mental model refresh' MENTAL_MODEL_REFRESH "$global_provider" "$global_model"
   printf '%-22s %s\n' Recall '不调用 LLM（向量/结构化检索）'
   printf '%-22s provider=%s\n' Embedding "${embedding:-local/内置配置}"
+  printf '%-22s max_concurrent=%s retain_timeout=%ss consolidation_timeout=%ss\n' Runtime \
+    "$(get_env HINDSIGHT_API_LLM_MAX_CONCURRENT || true)" \
+    "$(get_env HINDSIGHT_API_RETAIN_LLM_TIMEOUT || true)" \
+    "$(get_env HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT || true)"
 }
 
 restart_and_verify(){
@@ -104,11 +108,15 @@ case "${1:-status}" in
       api_key_source="interactive input"
     fi
     [[ -n "$api_key" && -n "$model" ]] || die "API Key 和模型不能为空。"
+    case "$operation" in
+      retain|consolidation|mental-model-refresh) operation_timeout=180 ;;
+      reflect) operation_timeout=120 ;;
+    esac
     write_env_value "HINDSIGHT_API_${prefix}_LLM_PROVIDER" zai
     write_env_value "HINDSIGHT_API_${prefix}_LLM_MODEL" "$model"
     write_env_value "HINDSIGHT_API_${prefix}_LLM_API_KEY" "$api_key"
     write_env_value "HINDSIGHT_API_${prefix}_LLM_BASE_URL" "$DEFAULT_ZAI_BASE_URL"
-    write_env_value "HINDSIGHT_API_${prefix}_LLM_TIMEOUT" 60
+    write_env_value "HINDSIGHT_API_${prefix}_LLM_TIMEOUT" "$operation_timeout"
     write_env_value "HINDSIGHT_API_${prefix}_LLM_MAX_RETRIES" 0
     unset api_key ZAI_API_KEY
     log "已配置 ${operation} → z.ai/${model} (${DEFAULT_ZAI_BASE_URL})；Key 来源=${api_key_source}（内容未输出）；其他未覆盖操作继续继承全局 Provider。"
@@ -126,7 +134,15 @@ case "${1:-status}" in
     restart_and_verify
     show_status
     ;;
+  tune-low-memory)
+    write_env_value HINDSIGHT_API_LLM_MAX_CONCURRENT 1
+    write_env_value HINDSIGHT_API_RETAIN_LLM_TIMEOUT 180
+    write_env_value HINDSIGHT_API_CONSOLIDATION_LLM_TIMEOUT 180
+    log "已应用低内存稳定性参数：LLM 最大并发=1，Retain/Consolidation timeout=180 秒。"
+    restart_and_verify
+    show_status
+    ;;
   *)
-    die "用法：$0 status | zai-operation <retain|reflect|consolidation|mental-model-refresh> [model] | inherit-operation <操作>"
+    die "用法：$0 status | zai-operation <retain|reflect|consolidation|mental-model-refresh> [model] | inherit-operation <操作> | tune-low-memory"
     ;;
 esac
